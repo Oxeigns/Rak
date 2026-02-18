@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from pydantic import AliasChoices, Field, ValidationError, field_validator, model_validator
@@ -170,10 +174,41 @@ class AppConfig(BaseSettings):
 # ================= LOADER =================
 
 def load_config() -> AppConfig:
+    payload = _build_config_payload()
     try:
-        return AppConfig()
+        return AppConfig(**payload)
     except ValidationError as exc:
         raise ConfigError(f"Configuration validation failed:\n{exc}") from exc
+
+
+def _build_config_payload() -> dict[str, Any]:
+    payload = _load_app_json_defaults()
+    payload.update({key: value for key, value in os.environ.items() if value is not None})
+
+    if not payload.get("CALLBACK_SECRET") and payload.get("BOT_TOKEN"):
+        payload["CALLBACK_SECRET"] = hashlib.sha256(
+            f"callback:{payload['BOT_TOKEN']}".encode("utf-8")
+        ).hexdigest()
+
+    return payload
+
+
+def _load_app_json_defaults(app_json_path: str = "app.json") -> dict[str, str]:
+    path = Path(app_json_path)
+    if not path.exists():
+        return {}
+
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    env_map = parsed.get("env", {})
+    defaults: dict[str, str] = {}
+    for key, item in env_map.items():
+        if isinstance(item, dict) and item.get("value") not in (None, ""):
+            defaults[key] = str(item["value"])
+    return defaults
 
 
 @lru_cache(maxsize=1)
