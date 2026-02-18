@@ -93,7 +93,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "action_deleted": "Message deleted",
 
         # Errors
-        "not_admin": "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\nYou are not an admin in this group.",
+        "not_admin": "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\nʏᴏᴜ ᴀʀᴇ ɴᴏᴛ ᴀɴ ᴀᴅᴍɪɴ ɪɴ ᴛʜɪs ɢʀᴏᴜᴘ.",
         "permission_denied": "Permission denied.",
         "group_not_found": "Group not found in database.",
         "violation_removed": "◆ ᴄᴏɴᴛᴇɴᴛ ʀᴇᴍᴏᴠᴇᴅ 🚫",
