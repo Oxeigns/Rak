@@ -26,13 +26,13 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from settings import get_settings
-from models.database import Group, GroupSettings, GroupType, GroupUser, Message, PersonalityMode, RiskLevel, User, db_manager
-from services.ai_moderation import ai_moderation_service
-from services.anti_raid import anti_raid_system
-from services.control_panel import control_panel
-from services.risk_engine import risk_engine
-from services.trust_engine import trust_engine
-from utils.helpers import (
+from database import Group, GroupSettings, GroupType, GroupUser, Message, PersonalityMode, RiskLevel, User, db_manager
+from ai_moderation import ai_moderation_service
+from anti_raid import anti_raid_system
+from control_panel import control_panel
+from risk_engine import risk_engine
+from trust_engine import trust_engine
+from helpers import (
     auto_delete_message,
     get_all_groups,
     get_all_users,
@@ -40,7 +40,7 @@ from utils.helpers import (
     ensure_user_joined,
     verify_join_callback,
 )
-from utils.i18n import get_text
+from i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,7 @@ class AIGovernorBot:
                 return
 
             # Update setting
-            from utils.helpers import update_group_setting
+            from helpers import update_group_setting
             success = await update_group_setting(chat.id, "auto_delete_edited", seconds)
 
             if success:
@@ -405,7 +405,7 @@ class AIGovernorBot:
         text = update.message.text.strip()
 
         try:
-            from utils.helpers import update_group_setting
+            from helpers import update_group_setting
 
             if setting_type == "auto_delete_time":
                 value = int(text)

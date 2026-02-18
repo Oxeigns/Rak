@@ -153,7 +153,7 @@ async def auto_delete_message(message, delay_seconds: int):
 
 
 async def get_group_settings(group_id: int) -> dict:
-    from models.database import Group, GroupSettings, db_manager
+    from database import Group, GroupSettings, db_manager
     from sqlalchemy import select
 
     default = {
@@ -196,7 +196,7 @@ async def get_group_settings(group_id: int) -> dict:
 
 async def update_group_setting(group_id: int, setting: str, value):
     """Update group setting with custom field support."""
-    from models.database import GroupSettings, db_manager
+    from database import GroupSettings, db_manager
     from sqlalchemy import select
 
     # Custom settings that don't exist in GroupSettings model
@@ -227,7 +227,7 @@ async def update_group_setting(group_id: int, setting: str, value):
                 return True
             else:
                 # Handle standard Group fields
-                from models.database import Group
+                from database import Group
                 row = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
                 if not row:
                     return False
@@ -240,7 +240,7 @@ async def update_group_setting(group_id: int, setting: str, value):
 
 
 async def get_all_groups() -> list:
-    from models.database import Group, db_manager
+    from database import Group, db_manager
     from sqlalchemy import select
 
     try:
@@ -252,7 +252,7 @@ async def get_all_groups() -> list:
 
 
 async def get_all_users() -> list:
-    from models.database import User, db_manager
+    from database import User, db_manager
     from sqlalchemy import select
 
     try:

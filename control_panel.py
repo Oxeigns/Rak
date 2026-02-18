@@ -13,7 +13,7 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackContext
 
 from settings import get_settings
-from utils.i18n import get_text
+from i18n import get_text
 
 
 @dataclass
@@ -64,7 +64,7 @@ class ControlPanel:
         ])
     
     async def _protection_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
-        from utils.helpers import get_group_settings
+        from helpers import get_group_settings
 
         settings = await get_group_settings(group_id)
         def status(key):
@@ -290,7 +290,7 @@ class ControlPanel:
     
 
     async def _settings_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
-        from utils.helpers import get_group_settings
+        from helpers import get_group_settings
 
         settings = await get_group_settings(group_id)
         return InlineKeyboardMarkup([
