@@ -27,52 +27,49 @@
   "env": {
     "BOT_TOKEN": {
       "description": "Telegram Bot Token",
-      "value": "PASTE_YOUR_BOT_TOKEN_HERE",
       "required": true
     },
-    "API_ID": {
-      "description": "Telegram API ID",
-      "value": "35335474",
-      "required": true
-    },
-    "API_HASH": {
-      "description": "Telegram API Hash",
-      "value": "65c9d8d32a75ba9af8cc401d940b5957",
-      "required": true
-    },
-    "OWNER_ID": {
-      "description": "Bot Owner ID",
+
+    "ADMIN_IDS": {
+      "description": "Bot Admin IDs (comma separated if multiple)",
       "value": "1888832817",
       "required": true
     },
+
     "LOG_GROUP_ID": {
-      "description": "Log Group ID",
-      "value": "-100xxxxxxxxxx",
+      "description": "Log Group ID (-100xxxx)",
       "required": true
     },
+
     "FORCE_CHANNEL_ID": {
-      "description": "Force Join Channel ID",
+      "description": "Force Join Channel ID (-100xxxx)",
       "value": "-1002574289485",
       "required": true
     },
+
     "FORCE_CHANNEL_LINK": {
-      "description": "Force Join Link",
+      "description": "Force Join Link (https://t.me/username)",
       "value": "https://t.me/aghoris",
       "required": true
     },
+
+    "CALLBACK_SECRET": {
+      "description": "Random secret key (min 16 chars)",
+      "required": true
+    },
+
     "GROQ_API_KEY": {
       "description": "Groq API Key",
-      "value": "",
       "required": true
     },
+
     "GEMINI_API_KEY": {
       "description": "Gemini API Key",
-      "value": "",
       "required": true
     },
+
     "HUGGINGFACE_TOKEN": {
       "description": "HF Token",
-      "value": "",
       "required": false
     }
   },
