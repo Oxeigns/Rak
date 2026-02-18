@@ -14,6 +14,49 @@ from settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+
+async def hf_text_moderation(text: str) -> Optional[float]:
+    """Run first-layer text toxicity check using HuggingFace Toxic-BERT."""
+    hf_token = os.getenv("HF_TOKEN")
+    if not hf_token or not text.strip():
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                "https://api-inference.huggingface.co/models/unitary/toxic-bert",
+                headers={"Authorization": f"Bearer {hf_token}"},
+                json={"inputs": text},
+            )
+    except httpx.TimeoutException:
+        return None
+    except Exception:
+        return None
+
+    if response.status_code != 200:
+        return None
+
+    try:
+        payload = response.json()
+    except Exception:
+        return None
+
+    if not isinstance(payload, list) or not payload:
+        return None
+
+    first = payload[0]
+    if not isinstance(first, list):
+        return None
+
+    for item in first:
+        if isinstance(item, dict) and str(item.get("label", "")).lower() == "toxic":
+            try:
+                return float(item.get("score", 0.0))
+            except (TypeError, ValueError):
+                return None
+
+    return None
+
 class ModerationService:
     """Dual moderation service: Groq (text) + Gemini (image)."""
 
@@ -66,6 +109,17 @@ class ModerationService:
         strict_result = self._rule_based_high_security_scan(combined_text)
         if strict_result is not None:
             return strict_result
+
+        if text_value and not caption_value:
+            hf_toxic_score = await hf_text_moderation(text_value)
+            if hf_toxic_score is not None and hf_toxic_score > 0.85:
+                return {
+                    "is_safe": False,
+                    "toxic_score": hf_toxic_score,
+                    "illegal_score": 0.0,
+                    "spam_score": 0.0,
+                    "reason": "Bhai, toxic text detect hua",
+                }
 
         if not self.groq_api_key:
             logger.error("Groq API key missing for text moderation")
