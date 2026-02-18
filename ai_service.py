@@ -27,6 +27,7 @@ class ModerationService:
         self.timeout_seconds = float(self.settings.AI_TIMEOUT)
 
         self._http_client: Optional[httpx.AsyncClient] = None
+        self.GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
         self._gemini_model = None
         self._gemini_client = None
 
@@ -150,6 +151,77 @@ class ModerationService:
         except Exception as e:
             logger.error(f"Gemini Error: {e}")
             return {"is_safe": False, "reason": "Image analysis error", "analysis_error": True}
+
+    async def analyze_sticker(self, sticker_bytes: bytes, is_animated: bool, set_name: str = None) -> Dict:
+        if not self.gemini_api_key:
+            return {"is_safe": True}
+
+        await self.initialize()
+        image_base64 = __import__("base64").b64encode(sticker_bytes).decode("utf-8")
+        prompt = """Analyze sticker for: NSFW, violence, hate symbols, drugs, vulgar gestures.
+Return JSON: {"is_safe": true/false, "reason": "brief"}"""
+        try:
+            result = await self._call_gemini_vision(image_base64, prompt, "image/webp")
+            return self._normalize_image_response(result)
+        except Exception as e:
+            logger.error(f"Sticker analysis: {e}")
+            return {"is_safe": True}
+
+    async def analyze_animation(self, anim_bytes: bytes, mime_type: str, file_name: str = None) -> Dict:
+        if not self.gemini_api_key:
+            return {"is_safe": True}
+
+        await self.initialize()
+        image_base64 = __import__("base64").b64encode(anim_bytes).decode("utf-8")
+        prompt = """Analyze GIF for: NSFW, violence, offensive gestures, flashing, hate symbols.
+Return JSON: {"is_safe": true/false, "reason": "brief"}"""
+        try:
+            result = await self._call_gemini_vision(image_base64, prompt, mime_type or "image/gif")
+            return self._normalize_image_response(result)
+        except Exception as e:
+            logger.error(f"Animation analysis: {e}")
+            return {"is_safe": True}
+
+    async def _call_gemini_vision(self, image_base64: str, prompt: str, mime_type: str) -> Dict:
+        await self.initialize()
+        url = f"{self.GEMINI_API_BASE}/models/gemini-1.5-flash:generateContent"
+        params = {"key": self.gemini_api_key}
+        body = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime_type, "data": image_base64}}
+                ]
+            }],
+            "generationConfig": {"temperature": 0}
+        }
+        response = await self._http_client.post(url, params=params, json=body)
+        response.raise_for_status()
+        payload = response.json()
+        text = self._extract_gemini_text(payload)
+        return self._parse_json_like_response(text)
+
+    @staticmethod
+    def _extract_gemini_text(payload: Dict[str, Any]) -> str:
+        candidates = payload.get("candidates", [])
+        if not candidates:
+            return "{}"
+        parts = (((candidates[0] or {}).get("content") or {}).get("parts") or [])
+        for part in parts:
+            if "text" in part:
+                return str(part["text"])
+        return "{}"
+
+    @staticmethod
+    def _parse_json_like_response(text: str) -> Dict[str, Any]:
+        try:
+            return json.loads(text)
+        except Exception:
+            cleaned = text.strip().removeprefix("```").removesuffix("```").strip()
+            try:
+                return json.loads(cleaned)
+            except Exception:
+                return {"is_safe": True, "reason": "Safe"}
 
     @staticmethod
     def _normalize_text_response(raw: Dict) -> Dict:

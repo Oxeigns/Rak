@@ -4,6 +4,7 @@ Core message processing and event handling
 """
 
 import logging
+import asyncio
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
@@ -25,13 +26,20 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from config.settings import get_settings
-from models.database import Group, GroupSettings, GroupType, Message, PersonalityMode, RiskLevel, User, db_manager
+from models.database import Group, GroupSettings, GroupType, GroupUser, Message, PersonalityMode, RiskLevel, User, db_manager
 from services.ai_moderation import ai_moderation_service
 from services.anti_raid import anti_raid_system
 from services.control_panel import control_panel
 from services.risk_engine import risk_engine
 from services.trust_engine import trust_engine
-from utils.helpers import is_user_joined, verify_join_callback
+from utils.helpers import (
+    auto_delete_message,
+    get_all_groups,
+    get_all_users,
+    is_user_joined,
+    ensure_user_joined,
+    verify_join_callback,
+)
 from utils.i18n import get_text
 
 logger = logging.getLogger(__name__)
@@ -44,6 +52,7 @@ class AIGovernorBot:
         self.settings = get_settings()
         self.application: Optional[Application] = None
         self._handlers_registered = False
+        self._promotion_tasks = []
         self._button_clicks: dict[int, deque[float]] = defaultdict(deque)
 
     async def initialize(self):
@@ -53,6 +62,8 @@ class AIGovernorBot:
 
         self.application = Application.builder().token(self.settings.BOT_TOKEN).build()
         self._register_handlers()
+        self._promotion_tasks.append(asyncio.create_task(self._group_promotion_loop()))
+        self._promotion_tasks.append(asyncio.create_task(self._dm_promotion_loop()))
 
     def _register_handlers(self):
         """Register all bot handlers exactly once."""
@@ -79,32 +90,47 @@ class AIGovernorBot:
 
     @is_user_joined
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /start command with immediate response in private and groups."""
-        if not update.effective_chat or not update.message:
+        """Handle /start command with premium minimal UI."""
+        if not update.effective_chat or not update.effective_user:
             return
 
         chat = update.effective_chat
-        language = "en"
-
-        if chat.type == ChatType.PRIVATE:
-            await update.message.reply_text(
-                (
-                    f"{self.settings.BOT_NAME} v{self.settings.BOT_VERSION}\n\n"
-                    "I protect Telegram groups with AI moderation, anti-raid, and trust scoring.\n"
-                    "Add me to your group and grant admin permissions to activate protection."
-                )
-            )
+        if chat.type == ChatType.PRIVATE and not await ensure_user_joined(update, context):
             return
 
-        await update.message.reply_text("✅ AI Governor is online. Checking setup...")
+        total_groups = await self._get_total_groups()
+        total_violations = await self._get_total_violations()
 
-        bot_member = await chat.get_member(context.bot.id)
-        if bot_member.status not in {"administrator", "creator"}:
-            await update.message.reply_text(get_text("activate_admin", language), parse_mode="Markdown")
-            return
+        welcome_text = f"""◆ ʜᴇʏ ɪ ᴀᴍ 🤖 ʀᴀᴋsʜᴀᴋ ᴀɪ 💗
 
-        await self._create_group(chat)
-        await self._send_welcome_message(update, context)
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ᴀɪ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ ʙᴏᴛ ғᴏʀ ᴛᴇʟᴇɢʀᴀᴍ ɢʀᴏᴜᴘs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚘ ɴᴇᴡ ғᴇᴀᴛᴜʀᴇs :-
+
+● ᴀɪ ᴛᴇxᴛ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ
+● ɪᴍᴀɢᴇ ᴄᴏɴᴛᴇɴᴛ ᴀɴᴀʟʏsɪs
+● sᴛɪᴄᴋᴇʀ & ɢɪғ ᴅᴇᴛᴇᴄᴛɪᴏɴ
+● ʟɪɴᴋ ғɪʟᴛᴇʀɪɴɢ
+● ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ sʏsᴛᴇᴍ
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+◉ ᴛᴏᴛᴀʟ ɢʀᴏᴜᴘs : {total_groups} | ᴠɪᴏʟᴀᴛɪᴏɴs : {total_violations}
+
+• ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ •"""
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("• ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ •", url=f"https://t.me/{context.bot.username}?startgroup=true")],
+                [InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ", url=self.settings.SUPPORT_CHANNEL_LINK)],
+            ]
+        )
+        msg = await context.bot.send_message(chat_id=chat.id, text=welcome_text, reply_markup=keyboard)
+        asyncio.create_task(auto_delete_message(msg, self.settings.AUTO_DELETE_WELCOME))
 
     @is_user_joined
     async def cmd_panel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -249,6 +275,10 @@ class AIGovernorBot:
             return
 
         action_name, group_id = payload
+        critical_actions = {"trust_reset", "raid_lockdown", "set_owner", "system_reset"}
+        if action_name in critical_actions and query.from_user.id != self.settings.OWNER_ID:
+            await query.answer("Only owner can perform this action.", show_alert=True)
+            return
         if not await self._is_admin(group_id, query.from_user.id, context):
             await query.answer(get_text("not_admin", "en"), show_alert=True)
             return
@@ -609,6 +639,82 @@ class AIGovernorBot:
                 "Protection activated."
             ),
         )
+
+    async def _group_promotion_loop(self):
+        while True:
+            await asyncio.sleep(max(1, self.settings.GROUP_PROMOTION_INTERVAL) * 3600)
+            await self._send_group_promotion()
+
+    async def _dm_promotion_loop(self):
+        while True:
+            await asyncio.sleep(max(1, self.settings.DM_PROMOTION_INTERVAL) * 3600)
+            await self._send_dm_promotion()
+
+    async def _send_group_promotion(self):
+        if not self.application:
+            return
+        try:
+            groups = await get_all_groups()
+            promo_text = """◆ 🤖 ʀᴀᴋsʜᴀᴋ ᴀɪ ɢᴜᴀʀᴅɪᴀɴ 💗
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ᴋᴇᴇᴘɪɴɢ ʏᴏᴜʀ ɢʀᴏᴜᴘ sᴀғᴇ ᴀɴᴅ ᴄʟᴇᴀɴ
+
+⚘ ғᴇᴀᴛᴜʀᴇs :-
+
+● ᴀɪ ᴄᴏɴᴛᴇɴᴛ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ
+● sᴛɪᴄᴋᴇʀ & ɢɪғ ᴀɴᴀʟʏsɪs
+● ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ sʏsᴛᴇᴍ
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ •"""
+            keyboard = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("• ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ •", url=f"https://t.me/{self.application.bot.username}?startgroup=true")]]
+            )
+            for group_id in groups:
+                try:
+                    msg = await self.application.bot.send_message(chat_id=group_id, text=promo_text, reply_markup=keyboard)
+                    asyncio.create_task(auto_delete_message(msg, 3600))
+                except Exception:
+                    continue
+        except Exception as exc:
+            logger.error("Group promotion error: %s", exc)
+
+    async def _send_dm_promotion(self):
+        if not self.application:
+            return
+        try:
+            users = await get_all_users()
+            promo_text = """◆ ʜᴇʏ ᴛʜᴇʀᴇ 👋 💗
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ᴍɪss ᴍᴇ ? ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ
+ᴀɴᴅ ᴋᴇᴇᴘ ɪᴛ sᴀғᴇ ғʀᴏᴍ sᴘᴀᴍ & ᴛᴏxɪᴄɪᴛʏ
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• ᴀᴅᴅ ᴍᴇ ɴᴏᴡ •"""
+            keyboard = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("• ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ •", url=f"https://t.me/{self.application.bot.username}?startgroup=true")]]
+            )
+            for user_id in users:
+                try:
+                    await self.application.bot.send_message(chat_id=user_id, text=promo_text, reply_markup=keyboard)
+                except Exception:
+                    continue
+        except Exception as exc:
+            logger.error("DM promotion error: %s", exc)
+
+    async def _get_total_groups(self) -> int:
+        return len(await get_all_groups())
+
+    async def _get_total_violations(self) -> int:
+        async with db_manager.get_session() as session:
+            rows = await session.execute(select(GroupUser.violation_count))
+            return int(sum(row[0] or 0 for row in rows.all()))
 
 
 governor_bot = AIGovernorBot()

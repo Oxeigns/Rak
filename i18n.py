@@ -89,6 +89,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "not_admin": "You must be an admin to use this.",
         "permission_denied": "Permission denied.",
         "group_not_found": "Group not found in database.",
+        "violation_removed": "◆ ᴄᴏɴᴛᴇɴᴛ ʀᴇᴍᴏᴠᴇᴅ 🚫",
+        "admin_panel_title": "◆ ᴀᴅᴍɪɴ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ ⚙️",
     },
     
     "hi": {
@@ -166,6 +168,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "not_admin": "इसका उपयोग करने के लिए आपको एडमिन होना चाहिए।",
         "permission_denied": "अनुमति अस्वीकृत।",
         "group_not_found": "समूह डेटाबेस में नहीं मिला।",
+        "violation_removed": "◆ ᴄᴏɴᴛᴇɴᴛ ʀᴇᴍᴏᴠᴇᴅ 🚫",
+        "admin_panel_title": "◆ ᴀᴅᴍɪɴ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ ⚙️",
     },
     
     "hinglish": {
@@ -223,6 +227,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "not_admin": "Admin hona zaroori hai.",
         "permission_denied": "Permission nahi hai.",
         "group_not_found": "Group database mein nahi mila.",
+        "violation_removed": "◆ ᴄᴏɴᴛᴇɴᴛ ʀᴇᴍᴏᴠᴇᴅ 🚫",
+        "admin_panel_title": "◆ ᴀᴅᴍɪɴ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ ⚙️",
     }
 }
 

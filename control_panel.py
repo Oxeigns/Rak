@@ -45,128 +45,35 @@ class ControlPanel:
         menus = {
             "main": self._main_menu_buttons,
             "protection": self._protection_menu_buttons,
-            "engagement": self._engagement_menu_buttons,
-            "trust_system": self._trust_menu_buttons,
-            "raid_protection": self._raid_menu_buttons,
-            "analytics": self._analytics_menu_buttons,
-            "personality": self._personality_menu_buttons,
+            "settings": self._settings_menu_buttons,
             "language": self._language_menu_buttons,
-            "advanced_ai": self._advanced_ai_menu_buttons,
-            "system_status": self._system_status_buttons,
         }
         
         builder = menus.get(menu_name, self._main_menu_buttons)
         return builder(group_id, language)
     
     def _main_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
-        """Main control panel menu."""
-        t = lambda key: get_text(key, language)
-        
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    f"{t('shield')} {t('protection_settings')}", 
-                    callback_data=f"cp:protection:{group_id}"
-                ),
-                InlineKeyboardButton(
-                    f"{t('fire')} {t('engagement_engine')}", 
-                    callback_data=f"cp:engagement:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('trust')} {t('trust_system')}", 
-                    callback_data=f"cp:trust_system:{group_id}"
-                ),
-                InlineKeyboardButton(
-                    f"{t('shield_alert')} {t('raid_protection')}", 
-                    callback_data=f"cp:raid_protection:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('chart')} {t('analytics')}", 
-                    callback_data=f"cp:analytics:{group_id}"
-                ),
-                InlineKeyboardButton(
-                    f"{t('sparkles')} {t('personality_mode')}", 
-                    callback_data=f"cp:personality:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('globe')} {t('language')}", 
-                    callback_data=f"cp:language:{group_id}"
-                ),
-                InlineKeyboardButton(
-                    f"{t('brain')} {t('advanced_ai')}", 
-                    callback_data=f"cp:advanced_ai:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('activity')} {t('system_status')}", 
-                    callback_data=f"cp:system_status:{group_id}"
-                ),
-            ],
-        ]
-        
-        return InlineKeyboardMarkup(keyboard)
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛡️ ғɪʟᴛᴇʀs", callback_data=f"cp:protection:{group_id}")],
+            [InlineKeyboardButton("⚙️ sᴇᴛᴛɪɴɢs", callback_data=f"cp:settings:{group_id}")],
+            [InlineKeyboardButton("🌐 ʟᴀɴɢᴜᴀɢᴇ", callback_data=f"cp:language:{group_id}")],
+            [InlineKeyboardButton("📊 sᴛᴀᴛs", callback_data=f"cp_action:stats:{group_id}")],
+            [InlineKeyboardButton("❌ ᴄʟᴏsᴇ", callback_data=f"cp:close:{group_id}")],
+        ])
     
-    def _protection_menu_buttons(
-        self, 
-        group_id: int, 
-        language: str
-    ) -> InlineKeyboardMarkup:
-        """Protection settings menu."""
-        t = lambda key: get_text(key, language)
-        
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    f"{t('toggle_on')} Spam Shield", 
-                    callback_data=f"cp_toggle:spam_shield:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('toggle_on')} AI Abuse Detection", 
-                    callback_data=f"cp_toggle:ai_abuse:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('toggle_on')} Link Intelligence", 
-                    callback_data=f"cp_toggle:link_intel:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('toggle_off')} Strict Mode", 
-                    callback_data=f"cp_toggle:strict_mode:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('toggle_off')} Crypto Scam Shield", 
-                    callback_data=f"cp_toggle:crypto_shield:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('toggle_off')} Deep Media Analysis", 
-                    callback_data=f"cp_toggle:deep_media:{group_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{t('back')} {t('back_to_main')}", 
-                    callback_data=f"cp:main:{group_id}"
-                ),
-            ],
-        ]
-        
-        return InlineKeyboardMarkup(keyboard)
+    def _protection_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
+        settings = get_group_settings_sync(group_id)
+        def status(key):
+            return "🟢" if settings.get(key, True) else "🔴"
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{status('text_filter')} ᴛᴇxᴛ", callback_data=f"cp_toggle:text_filter:{group_id}")],
+            [InlineKeyboardButton(f"{status('image_filter')} ɪᴍᴀɢᴇ", callback_data=f"cp_toggle:image_filter:{group_id}")],
+            [InlineKeyboardButton(f"{status('sticker_filter')} sᴛɪᴄᴋᴇʀ", callback_data=f"cp_toggle:sticker_filter:{group_id}")],
+            [InlineKeyboardButton(f"{status('gif_filter')} ɢɪғ", callback_data=f"cp_toggle:gif_filter:{group_id}")],
+            [InlineKeyboardButton(f"{status('link_filter')} ʟɪɴᴋ", callback_data=f"cp_toggle:link_filter:{group_id}")],
+            [InlineKeyboardButton(f"{status('auto_delete')} ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ", callback_data=f"cp_toggle:auto_delete:{group_id}")],
+            [InlineKeyboardButton("🔙 ʙᴀᴄᴋ", callback_data=f"cp:main:{group_id}")],
+        ])
     
     def _engagement_menu_buttons(
         self, 
@@ -377,6 +284,18 @@ class ControlPanel:
         
         return InlineKeyboardMarkup(keyboard)
     
+
+    def _settings_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
+        settings = get_group_settings_sync(group_id)
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"⏱️ ᴀᴜᴛᴏ-ᴅᴇʟ: {settings.get('auto_delete_time', 60)}s", callback_data=f"cp_action:set_autodelete:{group_id}")],
+            [InlineKeyboardButton(f"📝 ᴇᴅɪᴛᴇᴅ ᴀᴜᴛᴏ-ᴅᴇʟ: {settings.get('auto_delete_edited', 300)}s", callback_data=f"cp_action:set_edited_autodelete:{group_id}")],
+            [InlineKeyboardButton(f"⚡ ᴛʜʀᴇsʜᴏʟᴅ: {int(settings.get('toxic_threshold', 0.7) * 100)}%", callback_data=f"cp_action:set_threshold:{group_id}")],
+            [InlineKeyboardButton(f"⏳ ᴍᴜᴛᴇ: {settings.get('mute_duration', 24)}ʜ", callback_data=f"cp_action:set_mute_duration:{group_id}")],
+            [InlineKeyboardButton(f"📝 ᴡᴀʀɴɪɴɢs: {settings.get('max_warnings', 3)}", callback_data=f"cp_action:set_max_warnings:{group_id}")],
+            [InlineKeyboardButton("🔙 ʙᴀᴄᴋ", callback_data=f"cp:main:{group_id}")],
+        ])
+
     def _language_menu_buttons(
         self, 
         group_id: int, 
@@ -560,6 +479,22 @@ class ControlPanel:
                 return
             raise
 
+
+def get_group_settings_sync(group_id: int) -> Dict:
+    from utils.helpers import settings as app_settings
+    return {
+        "text_filter": True,
+        "image_filter": True,
+        "sticker_filter": True,
+        "gif_filter": True,
+        "link_filter": True,
+        "auto_delete": True,
+        "auto_delete_time": app_settings.AUTO_DELETE_BOT_MSG,
+        "auto_delete_edited": app_settings.AUTO_DELETE_EDITED,
+        "toxic_threshold": 0.7,
+        "mute_duration": 24,
+        "max_warnings": 3,
+    }
 
 # Global control panel instance
 control_panel = ControlPanel()
