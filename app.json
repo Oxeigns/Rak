@@ -1,5 +1,5 @@
 {
-  "name": "AI Governor Bot",
+  "name": "AI Governor Bot (Test)",
   "description": "AI-powered Telegram moderation bot with FastAPI webhook support.",
   "repository": "https://github.com/Oxeigns/Rak",
   "keywords": [
@@ -11,71 +11,72 @@
     "python"
   ],
   "stack": "heroku-22",
+
   "addons": [
     "heroku-postgresql:essential-0",
     "heroku-redis:mini"
   ],
+
   "formation": {
     "web": {
       "quantity": 1,
-      "size": "basic"
+      "size": "eco"
     }
   },
+
   "env": {
     "BOT_TOKEN": {
-      "description": "Your Telegram Bot Token from @BotFather",
+      "description": "Telegram Bot Token",
+      "value": "PASTE_YOUR_BOT_TOKEN_HERE",
       "required": true
     },
     "API_ID": {
-      "description": "35335474",
+      "description": "Telegram API ID",
+      "value": "35335474",
       "required": true
     },
     "API_HASH": {
-      "description": "65c9d8d32a75ba9af8cc401d940b5957",
+      "description": "Telegram API Hash",
+      "value": "65c9d8d32a75ba9af8cc401d940b5957",
       "required": true
     },
     "OWNER_ID": {
-      "description": "1888832817",
+      "description": "Bot Owner ID",
+      "value": "1888832817",
       "required": true
     },
     "LOG_GROUP_ID": {
-      "description": "Telegram group/channel ID where bot logs and alerts are sent",
+      "description": "Log Group ID",
+      "value": "-100xxxxxxxxxx",
       "required": true
     },
     "FORCE_CHANNEL_ID": {
-      "description": "-1002574289485",
+      "description": "Force Join Channel ID",
+      "value": "-1002574289485",
       "required": true
     },
     "FORCE_CHANNEL_LINK": {
-      "description": "https://t.me/aghoris",
+      "description": "Force Join Link",
+      "value": "https://t.me/aghoris",
       "required": true
     },
     "GROQ_API_KEY": {
-      "description": "Groq API key for text moderation (optional if using HF Router only)",
+      "description": "Groq API Key",
+      "value": "",
       "required": true
     },
     "GEMINI_API_KEY": {
-      "description": "Gemini API key for image moderation (optional)",
+      "description": "Gemini API Key",
+      "value": "",
       "required": true
     },
     "HUGGINGFACE_TOKEN": {
-      "description": "Hugging Face token for router-based moderation (optional)",
-      "required": false
-    },
-    "WEBHOOK_SECRET": {
-      "description": "Random secret for webhook verification",
-      "generator": "secret",
-      "required": false
-    },
-    "WEBHOOK_URL": {
-      "description": "Public HTTPS webhook URL (optional; leave empty to use polling)",
-      "required": false
-    },
-    "SENTRY_DSN": {
-      "description": "Sentry DSN for error tracking (optional)",
+      "description": "HF Token",
+      "value": "",
       "required": false
     }
   },
+
   "buildpacks": [
     {
       "url": "heroku/python"
