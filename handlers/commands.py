@@ -5,8 +5,15 @@ from telegram.constants import ChatType
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
-from core.security import CallbackSecurityError, CallbackSigner
+from core.security import CallbackSigner
 from utils.safe_telegram import safe_send_message
+
+
+SECURE_PANEL_TEXT = '🔐 *Secure Panel*\n\nUse the button below to reopen this panel safely.'
+
+
+def build_secure_panel_keyboard(callback_data: str = 'secure_panel') -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton('Open Panel', callback_data=callback_data)]])
 
 
 class CommandHandlers:
@@ -19,17 +26,12 @@ class CommandHandlers:
 
         user = update.effective_user
 
-        try:
-            callback_data = self.signer.sign(user.id, 'open_panel')
-        except CallbackSecurityError:
-            callback_data = f'open_panel:{user.id}:0:{"0" * 16}'
-
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton('Open Panel', callback_data=callback_data)]])
+        keyboard = build_secure_panel_keyboard()
 
         await safe_send_message(
             context,
             chat_id=update.effective_chat.id,
-            text='Bot is online. Use the secure panel button below.',
+            text=SECURE_PANEL_TEXT,
             action='cmd_start',
             user_id=user.id,
             handler_name='CommandHandlers.start',

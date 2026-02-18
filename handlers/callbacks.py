@@ -7,8 +7,8 @@ from telegram.constants import ChatMemberStatus
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
-from core.security import CallbackSecurityError, CallbackSigner
-from utils.safe_telegram import safe_edit_message
+from core.security import CallbackSigner
+from handlers.commands import SECURE_PANEL_TEXT, build_secure_panel_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -62,33 +62,28 @@ class CallbackHandlers:
         if not query or not user:
             return
 
-        try:
-            await self.signer.verify(query.data or '', user.id, required_action='open_panel')
-            edit_result = await safe_edit_message(
-                query,
-                text='Secure panel opened successfully.',
-                action='secure_callback',
-                user_id=user.id,
-                handler_name='CallbackHandlers.secure_callback',
-            )
-            if edit_result is None:
-                await query.answer('This panel message is stale. Please run /start again.', show_alert=True)
-                return
+        if query.data != 'secure_panel':
+            await query.answer('Invalid panel action.', show_alert=True)
+            return
 
-            await query.answer('Done')
-        except CallbackSecurityError as exc:
-            await query.answer(str(exc), show_alert=True)
-            logger.warning(
-                'Blocked insecure callback interaction.',
-                extra={
-                    'user_id': user.id,
-                    'chat_id': query.message.chat_id if query.message else None,
-                    'action': 'secure_callback',
-                    'handler_name': 'CallbackHandlers.secure_callback',
-                    'error_type': type(exc).__name__,
-                },
-                exc_info=exc,
-            )
+        keyboard = build_secure_panel_keyboard('secure_panel')
+
+        try:
+            try:
+                await query.message.edit_text(
+                    text=SECURE_PANEL_TEXT,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown',
+                )
+            except Exception as exc:
+                logger.error('Panel render failed: %s', exc, exc_info=exc)
+                await query.message.reply_text(
+                    text=SECURE_PANEL_TEXT,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown',
+                )
+
+            await query.answer()
         except RetryAfter as exc:
             await query.answer('Server busy, retry in a moment.', show_alert=True)
             logger.warning(
