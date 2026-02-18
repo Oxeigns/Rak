@@ -4,9 +4,18 @@
 
 [![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/Oxeigns/Rak)
 
+
+### One-click Heroku Deploy
+
+Use the button below to deploy this exact repository on Heroku:
+
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/Oxeigns/Rak)
+
+> Note: The deploy flow is configured by `app.json` in this repo.
+
 **The most advanced AI-powered Telegram moderation bot ever built.**
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/yourusername/ai-governor-bot)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/Oxeigns/Rak)
 [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
