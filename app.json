@@ -1,82 +1,49 @@
 {
-  "name": "AI Governor Bot (Test)",
-  "description": "AI-powered Telegram moderation bot with FastAPI webhook support.",
-  "repository": "https://github.com/Oxeigns/Rak",
-  "keywords": [
-    "telegram",
-    "bot",
-    "ai",
-    "moderation",
-    "fastapi",
-    "python"
-  ],
-  "stack": "heroku-22",
-
-  "addons": [
-    "heroku-postgresql:essential-0",
-    "heroku-redis:mini"
-  ],
-
-  "formation": {
-    "web": {
-      "quantity": 1,
-      "size": "eco"
-    }
-  },
-
+  "name": "Rakshak AI Bot",
+  "description": "AI-powered Telegram group moderation bot",
   "env": {
     "BOT_TOKEN": {
-      "description": "Telegram Bot Token",
+      "description": "Your Telegram Bot Token from @BotFather",
       "required": true
     },
-
-    "ADMIN_IDS": {
-      "description": "Bot Admin IDs (comma separated if multiple)",
-      "value": "1888832817",
-      "required": true
-    },
-
-    "LOG_GROUP_ID": {
-      "description": "Log Group ID (-100xxxx)",
-      "required": true
-    },
-
     "FORCE_CHANNEL_ID": {
-      "description": "Force Join Channel ID (-100xxxx)",
-      "value": "-1002574289485",
+      "description": "Force join channel ID (e.g., -1001234567890)",
       "required": true
     },
-
     "FORCE_CHANNEL_LINK": {
-      "description": "Force Join Link (https://t.me/username)",
-      "value": "https://t.me/aghoris",
+      "description": "Force join channel link (e.g., @yourchannel)",
       "required": true
     },
-
-    "CALLBACK_SECRET": {
-      "description": "Random secret key (min 16 chars)",
+    "LOG_GROUP_ID": {
+      "description": "Log group/channel ID for bot logs",
       "required": true
     },
-
+    "OWNER_ID": {
+      "description": "Your Telegram User ID (numeric)",
+      "required": true
+    },
+    "DATABASE_URL": {
+      "description": "PostgreSQL database URL",
+      "required": false
+    },
     "GROQ_API_KEY": {
-      "description": "Groq API Key",
-      "required": true
+      "description": "Groq API key for AI moderation",
+      "required": false
     },
-
     "GEMINI_API_KEY": {
-      "description": "Gemini API Key",
-      "required": true
-    },
-
-    "HUGGINGFACE_TOKEN": {
-      "description": "HF Token",
+      "description": "Google Gemini API key for image analysis",
       "required": false
     }
   },
-
   "buildpacks": [
     {
       "url": "heroku/python"
     }
-  ]
+  ],
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
 }
