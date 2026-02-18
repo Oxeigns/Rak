@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from settings import get_settings
 from database import Group, GroupSettings, GroupType, GroupUser, Message, RiskLevel, User, db_manager
-from ai_moderation import ai_moderation_service
+from ai_services import ai_moderation_service
 from anti_raid import anti_raid_system
 from control_panel import control_panel
 from risk_engine import risk_engine
