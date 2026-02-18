@@ -1,0 +1,65 @@
+{
+  "name": "AI Governor Bot",
+  "description": "Revolutionary AI-powered Telegram group management bot with Groq (Text) & Gemini (Image) AI.",
+  "repository": "https://github.com/Oxeigns/Governer",
+  "logo": "https://raw.githubusercontent.com/Oxeigns/Governer/main/assets/logo.png",
+  "keywords": [
+    "telegram",
+    "bot",
+    "ai",
+    "moderation",
+    "groq",
+    "gemini",
+    "vision-ai"
+  ],
+  "stack": "heroku-22",
+  "addons": [
+    "heroku-postgresql:essential-0",
+    "heroku-redis:mini"
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "env": {
+    "BOT_TOKEN": {
+      "description": "Your Telegram Bot Token from @BotFather",
+      "required": true
+    },
+    "API_ID": {
+      "description": "Telegram API ID from my.telegram.org/apps",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API Hash from my.telegram.org/apps",
+      "required": true
+    },
+    "GROQ_API_KEY": {
+      "description": "Your Groq API Key for Text Moderation",
+      "required": true
+    },
+    "GEMINI_API_KEY": {
+      "description": "Your Google Gemini API Key for Image Moderation",
+      "required": true
+    },
+    "WEBHOOK_SECRET": {
+      "description": "Random secret for webhook verification",
+      "generator": "secret",
+      "required": true
+    },
+    "SENTRY_DSN": {
+      "description": "Sentry DSN for error tracking (optional)",
+      "required": false
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "scripts": {
+    "postdeploy": "python -m scripts.init_db"
+  }
+}
