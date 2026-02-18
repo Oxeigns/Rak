@@ -1040,3 +1040,30 @@ class AIGovernorBot:
 
 
 governor_bot = AIGovernorBot()
+
+
+async def run_bot() -> None:
+    """Run the bot with database initialization and graceful shutdown."""
+    await db_manager.initialize()
+    await db_manager.create_tables()
+
+    await governor_bot.initialize()
+    app = governor_bot.application
+    if app is None:
+        raise RuntimeError("Telegram application failed to initialize")
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+        await db_manager.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(run_bot())
