@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatMemberStatus
@@ -10,6 +10,7 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from core.config import AppConfig
 from core.security import CooldownManager, UserRateLimiter
+from utils.safe_telegram import safe_send_message
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +47,34 @@ class ForceJoinMiddleware:
             member = await context.bot.get_chat_member(self.config.FORCE_JOIN_CHANNEL_ID, user_id)
             return member.status in _ALLOWED
         except RetryAfter as exc:
-            logger.warning('RetryAfter in force-join membership check.', extra={'user_id': user_id, 'action': 'force_join_check', 'error_type': type(exc).__name__})
+            wait_seconds = max(1, int(exc.retry_after))
+            logger.warning(
+                'RetryAfter in force-join membership check; waiting before deny.',
+                extra={'user_id': user_id, 'chat_id': self.config.FORCE_JOIN_CHANNEL_ID, 'action': 'force_join_check', 'error_type': type(exc).__name__},
+                exc_info=exc,
+            )
+            await asyncio.sleep(wait_seconds)
             return False
-        except (BadRequest, Forbidden) as exc:
-            logger.warning('Membership check denied/misconfigured.', extra={'user_id': user_id, 'chat_id': self.config.FORCE_JOIN_CHANNEL_ID, 'action': 'force_join_check', 'error_type': type(exc).__name__})
+        except Forbidden as exc:
+            logger.error(
+                'Bot lacks rights to verify force-join status.',
+                extra={'user_id': user_id, 'chat_id': self.config.FORCE_JOIN_CHANNEL_ID, 'action': 'force_join_check', 'error_type': type(exc).__name__},
+                exc_info=exc,
+            )
+            return False
+        except BadRequest as exc:
+            logger.error(
+                'Force-join channel misconfigured or invalid.',
+                extra={'user_id': user_id, 'chat_id': self.config.FORCE_JOIN_CHANNEL_ID, 'action': 'force_join_check', 'error_type': type(exc).__name__},
+                exc_info=exc,
+            )
             return False
         except (NetworkError, TelegramError) as exc:
-            logger.error('Telegram API failure in membership check.', exc_info=exc, extra={'user_id': user_id, 'chat_id': self.config.FORCE_JOIN_CHANNEL_ID, 'action': 'force_join_check', 'error_type': type(exc).__name__})
+            logger.error(
+                'Telegram API failure in membership check.',
+                extra={'user_id': user_id, 'chat_id': self.config.FORCE_JOIN_CHANNEL_ID, 'action': 'force_join_check', 'error_type': type(exc).__name__},
+                exc_info=exc,
+            )
             return False
 
     async def _rate_limit_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -60,52 +82,53 @@ class ForceJoinMiddleware:
         if query:
             await query.answer('Too many requests. Please slow down.', show_alert=True)
             return
+
         message = update.effective_message
         if message:
-            await message.reply_text('⚠️ Slow down. You are sending too many requests.')
+            await safe_send_message(
+                context,
+                chat_id=message.chat_id,
+                text='⚠️ Slow down. You are sending too many requests.',
+                action='rate_limit_prompt',
+                user_id=update.effective_user.id if update.effective_user else None,
+                handler_name='ForceJoinMiddleware._rate_limit_response',
+            )
 
     def _join_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton('Join Channel', url=self.config.FORCE_JOIN_CHANNEL_LINK)],
+                [InlineKeyboardButton('Join Channel', url=self.config.force_join_channel_link)],
                 [InlineKeyboardButton('Verify Join', callback_data='force_join:verify')],
             ]
         )
 
     async def _prompt_force_join(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        query = update.callback_query
         msg_text = 'Access denied. Join the required channel first, then tap Verify Join.'
+        user_id = update.effective_user.id if update.effective_user else None
 
+        query = update.callback_query
         if query:
             await query.answer('Join channel first.', show_alert=True)
             if query.message:
-                await query.message.reply_text(msg_text, reply_markup=self._join_keyboard())
+                await safe_send_message(
+                    context,
+                    chat_id=query.message.chat_id,
+                    text=msg_text,
+                    action='force_join_prompt_callback',
+                    user_id=user_id,
+                    handler_name='ForceJoinMiddleware._prompt_force_join',
+                    reply_markup=self._join_keyboard(),
+                )
             return
 
         message = update.effective_message
         if message:
-            await message.reply_text(msg_text, reply_markup=self._join_keyboard())
-
-
-async def safe_send_message(context: ContextTypes.DEFAULT_TYPE, *, chat_id: int, text: str, action: str, user_id: Optional[int] = None, **kwargs):
-    try:
-        return await context.bot.send_message(chat_id=chat_id, text=text, **kwargs)
-    except RetryAfter as exc:
-        logger.warning('RetryAfter while sending message.', extra={'user_id': user_id, 'chat_id': chat_id, 'action': action, 'error_type': type(exc).__name__})
-        raise
-    except (BadRequest, Forbidden, NetworkError, TelegramError) as exc:
-        logger.error('Failed to send message.', exc_info=exc, extra={'user_id': user_id, 'chat_id': chat_id, 'action': action, 'error_type': type(exc).__name__})
-        raise
-
-
-async def safe_edit_message(query, *, text: str, action: str, user_id: Optional[int] = None, **kwargs):
-    if not query or not query.message:
-        raise BadRequest('Callback query message is missing or deleted.')
-    try:
-        return await query.edit_message_text(text=text, **kwargs)
-    except RetryAfter as exc:
-        logger.warning('RetryAfter while editing message.', extra={'user_id': user_id, 'chat_id': query.message.chat_id, 'action': action, 'error_type': type(exc).__name__})
-        raise
-    except (BadRequest, Forbidden, NetworkError, TelegramError) as exc:
-        logger.error('Failed to edit message.', exc_info=exc, extra={'user_id': user_id, 'chat_id': query.message.chat_id, 'action': action, 'error_type': type(exc).__name__})
-        raise
+            await safe_send_message(
+                context,
+                chat_id=message.chat_id,
+                text=msg_text,
+                action='force_join_prompt_message',
+                user_id=user_id,
+                handler_name='ForceJoinMiddleware._prompt_force_join',
+                reply_markup=self._join_keyboard(),
+            )

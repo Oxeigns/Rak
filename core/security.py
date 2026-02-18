@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import hmac
 import time
@@ -13,45 +12,59 @@ class CallbackSecurityError(ValueError):
 
 
 class CallbackSigner:
-    def __init__(self, secret: str, ttl_seconds: int) -> None:
+    def __init__(self, secret: str, ttl_seconds: int, allowed_actions: set[str]) -> None:
         self._secret = secret.encode('utf-8')
         self._ttl = ttl_seconds
+        self._allowed_actions = allowed_actions
         self._consumed: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    def sign(self, owner_user_id: int, action: str, nonce: str) -> str:
-        issued_at = int(time.time())
-        payload = f'{owner_user_id}:{action}:{nonce}:{issued_at}'
-        digest = hmac.new(self._secret, payload.encode('utf-8'), hashlib.sha256).digest()
-        token = base64.urlsafe_b64encode(digest[:10]).decode('utf-8').rstrip('=')
-        return f'v1|{owner_user_id}|{action}|{nonce}|{issued_at}|{token}'
+    def _signature(self, action: str, owner_user_id: int, issued_at: int) -> str:
+        payload = f'{action}:{owner_user_id}:{issued_at}'.encode('utf-8')
+        return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
 
-    async def verify(self, callback_data: str, user_id: int, required_action: str | None = None) -> dict[str, str]:
-        parts = callback_data.split('|')
-        if len(parts) != 6 or parts[0] != 'v1':
+    def sign(self, owner_user_id: int, action: str) -> str:
+        if action not in self._allowed_actions:
+            raise CallbackSecurityError(f'Action {action!r} is not in callback allow-list.')
+        issued_at = int(time.time())
+        signature = self._signature(action, owner_user_id, issued_at)
+        return f'{action}:{owner_user_id}:{issued_at}:{signature}'
+
+    async def verify(self, callback_data: str, user_id: int, required_action: str | None = None) -> dict[str, int | str]:
+        parts = callback_data.split(':')
+        if len(parts) != 4:
             raise CallbackSecurityError('Malformed callback payload.')
 
-        owner, action, nonce, issued_at, token = parts[1:]
+        action, owner_raw, issued_at_raw, signature = parts
+        if action not in self._allowed_actions:
+            raise CallbackSecurityError('Callback action is not allowed.')
         if required_action and action != required_action:
             raise CallbackSecurityError('Unexpected callback action.')
-        if int(owner) != user_id:
+
+        try:
+            owner_user_id = int(owner_raw)
+            issued_at = int(issued_at_raw)
+        except ValueError as exc:
+            raise CallbackSecurityError('Malformed callback payload numeric fields.') from exc
+
+        if owner_user_id != user_id:
             raise CallbackSecurityError('This button does not belong to you.')
 
-        age = int(time.time()) - int(issued_at)
+        age = int(time.time()) - issued_at
         if age < 0 or age > self._ttl:
             raise CallbackSecurityError('This button has expired. Please run command again.')
 
-        expected = self.sign(int(owner), action, nonce).split('|')[-1]
-        if not hmac.compare_digest(expected, token):
+        expected_signature = self._signature(action, owner_user_id, issued_at)
+        if not hmac.compare_digest(expected_signature, signature):
             raise CallbackSecurityError('Invalid callback signature.')
 
-        unique_key = f'{owner}:{action}:{nonce}:{issued_at}'
-        async with self._locks[unique_key]:
-            if unique_key in self._consumed:
+        callback_key = f'{action}:{owner_user_id}:{issued_at}:{signature}'
+        async with self._locks[callback_key]:
+            if callback_key in self._consumed:
                 raise CallbackSecurityError('This button was already used.')
-            self._consumed.add(unique_key)
+            self._consumed.add(callback_key)
 
-        return {'owner_user_id': owner, 'action': action, 'nonce': nonce, 'issued_at': issued_at}
+        return {'owner_user_id': owner_user_id, 'action': action, 'issued_at': issued_at}
 
 
 class UserRateLimiter:

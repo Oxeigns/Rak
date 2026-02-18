@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 from core.config import ConfigError, get_config
-from core.logging_setup import setup_logging
+from core.logging import setup_logging
 from core.middleware import ForceJoinMiddleware
 from core.permissions import PermissionValidationError, validate_startup_permissions
 from core.security import CallbackSigner, CooldownManager, UserRateLimiter
@@ -31,7 +31,11 @@ logger = logging.getLogger(__name__)
 class BotContainer:
     def __init__(self) -> None:
         self.config = get_config()
-        self.signer = CallbackSigner(secret=self.config.CALLBACK_SECRET, ttl_seconds=self.config.CALLBACK_TTL_SECONDS)
+        self.signer = CallbackSigner(
+            secret=self.config.CALLBACK_SECRET,
+            ttl_seconds=self.config.CALLBACK_TTL_SECONDS,
+            allowed_actions=set(self.config.CALLBACK_ALLOWED_ACTIONS),
+        )
         self.rate_limiter = UserRateLimiter(
             window_seconds=self.config.SPAM_WINDOW_SECONDS,
             max_requests=self.config.SPAM_MAX_REQUESTS,
@@ -53,7 +57,7 @@ def build_application(container: BotContainer) -> Application:
     app.add_handler(CommandHandler('report', container.moderation.report))
 
     app.add_handler(CallbackQueryHandler(container.callbacks.handle_force_join_verify, pattern=r'^force_join:verify$'))
-    app.add_handler(CallbackQueryHandler(container.callbacks.secure_callback, pattern=r'^v1\|'))
+    app.add_handler(CallbackQueryHandler(container.callbacks.secure_callback, pattern=r'^[a-z_]+:\d+:\d+:[a-f0-9]{64}$'))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, container.moderation.moderate_text))
     app.add_error_handler(global_error_handler)
@@ -65,36 +69,55 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
     chat_id = update.effective_chat.id if isinstance(update, Update) and update.effective_chat else None
 
     err = context.error
+    base = {'user_id': user_id, 'chat_id': chat_id, 'action': 'handler_error', 'handler_name': 'global_error_handler', 'error_type': type(err).__name__ if err else 'Unknown'}
     if isinstance(err, RetryAfter):
-        logger.warning('RetryAfter in handler.', extra={'user_id': user_id, 'chat_id': chat_id, 'action': 'handler_error', 'error_type': type(err).__name__})
+        logger.warning('RetryAfter in handler.', extra=base, exc_info=err)
     elif isinstance(err, (BadRequest, Forbidden, NetworkError, TelegramError)):
-        logger.error('Telegram handler failure.', exc_info=err, extra={'user_id': user_id, 'chat_id': chat_id, 'action': 'handler_error', 'error_type': type(err).__name__})
+        logger.error('Telegram handler failure.', extra=base, exc_info=err)
     else:
-        logger.exception('Unexpected non-telegram failure.', extra={'user_id': user_id, 'chat_id': chat_id, 'action': 'handler_error', 'error_type': type(err).__name__ if err else 'Unknown'})
+        logger.exception('Unexpected non-telegram failure.', extra=base)
 
 
 async def run() -> None:
-    container = BotContainer()
+    try:
+        container = BotContainer()
+    except ConfigError as exc:
+        setup_logging('INFO')
+        logging.getLogger(__name__).critical(
+            'Configuration validation failed. Bot will not start.',
+            extra={'action': 'startup_config', 'handler_name': 'run', 'error_type': type(exc).__name__},
+            exc_info=exc,
+        )
+        raise
+
     setup_logging(container.config.LOG_LEVEL)
+    logger.info(
+        'Startup configuration validated.',
+        extra={'action': 'startup_config_report', 'handler_name': 'run', **container.config.startup_report()},
+    )
     app = build_application(container)
 
     await app.initialize()
     try:
         await validate_startup_permissions(app.bot, container.config)
-    except (ConfigError, PermissionValidationError):
-        logger.critical('Startup validation failed. Bot is stopping.', exc_info=True, extra={'action': 'startup_validate'})
+    except (ConfigError, PermissionValidationError) as exc:
+        logger.critical(
+            'Startup permission validation failed. Bot is stopping.',
+            extra={'action': 'startup_validate', 'handler_name': 'run', 'error_type': type(exc).__name__},
+            exc_info=exc,
+        )
         await app.shutdown()
         raise
 
     if container.config.WEBHOOK_URL:
         await app.bot.set_webhook(url=container.config.WEBHOOK_URL, secret_token=container.config.WEBHOOK_SECRET or None)
         await app.start()
-        logger.info('Webhook mode active.', extra={'action': 'startup'})
+        logger.info('Webhook mode active.', extra={'action': 'startup', 'handler_name': 'run'})
         await asyncio.Event().wait()
     else:
         await app.start()
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        logger.info('Polling mode active.', extra={'action': 'startup'})
+        logger.info('Polling mode active.', extra={'action': 'startup', 'handler_name': 'run'})
         await asyncio.Event().wait()
 
 

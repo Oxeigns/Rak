@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
-from core.middleware import safe_send_message
+from utils.safe_telegram import safe_send_message
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class ModerationHandlers:
                     text='Message removed by moderation policy.',
                     action='moderate_text_delete',
                     user_id=user.id,
+                    handler_name='ModerationHandlers.moderate_text',
                 )
             except RetryAfter as exc:
                 logger.warning('RetryAfter during moderation delete.', extra={'user_id': user.id, 'chat_id': chat.id, 'action': 'moderate_text', 'error_type': type(exc).__name__})
@@ -44,7 +45,7 @@ class ModerationHandlers:
             return
 
         if not message.reply_to_message:
-            await safe_send_message(context, chat_id=chat.id, text='Reply to a message to report it.', action='report_missing_reply', user_id=user.id)
+            await safe_send_message(context, chat_id=chat.id, text='Reply to a message to report it.', action='report_missing_reply', user_id=user.id, handler_name='ModerationHandlers.report')
             return
 
         target = message.reply_to_message.from_user
@@ -54,4 +55,5 @@ class ModerationHandlers:
             text=f'Report logged for user {target.id if target else "unknown"}.',
             action='report_submit',
             user_id=user.id,
+            handler_name='ModerationHandlers.report',
         )
