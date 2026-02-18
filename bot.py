@@ -73,8 +73,15 @@ class AIGovernorBot:
         app = self.application
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
+        app.add_handler(CommandHandler("set_edit", self.cmd_set_edit_autodelete))
 
         app.add_handler(CallbackQueryHandler(self.handle_toggle, pattern=r"^cp_toggle:"))
+        # Settings callbacks
+        app.add_handler(CallbackQueryHandler(self.handle_set_autodelete, pattern=r"^cp_action:set_autodelete:"))
+        app.add_handler(CallbackQueryHandler(self.handle_set_edited_autodelete, pattern=r"^cp_action:set_edited_autodelete:"))
+        app.add_handler(CallbackQueryHandler(self.handle_set_threshold, pattern=r"^cp_action:set_threshold:"))
+        app.add_handler(CallbackQueryHandler(self.handle_set_mute_duration, pattern=r"^cp_action:set_mute_duration:"))
+        app.add_handler(CallbackQueryHandler(self.handle_set_max_warnings, pattern=r"^cp_action:set_max_warnings:"))
         app.add_handler(CallbackQueryHandler(self.handle_action, pattern=r"^cp_action:"))
         app.add_handler(CallbackQueryHandler(self.handle_language, pattern=r"^cp_language:"))
         app.add_handler(CallbackQueryHandler(self.handle_personality, pattern=r"^cp_personality:"))
@@ -83,6 +90,12 @@ class AIGovernorBot:
 
         app.add_handler(ChatMemberHandler(self.handle_chat_member, ChatMemberHandler.ANY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, self.handle_new_members))
+        # Admin text input handler
+        app.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+            self.handle_text_input,
+            block=False
+        ))
         app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, self.handle_message))
 
         app.add_error_handler(self.handle_error)
@@ -149,6 +162,218 @@ class AIGovernorBot:
         language = group.language if group else "en"
         await control_panel.show_menu(update, context, "main", chat.id, language)
 
+    async def cmd_set_edit_autodelete(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Set edited message auto-delete time via command."""
+        if not update.effective_chat or not update.effective_user or not update.message:
+            return
+
+        chat = update.effective_chat
+        user = update.effective_user
+
+        # Admin check
+        if not await self._is_admin(chat.id, user.id, context):
+            await update.message.reply_text("❌ Only admins can use this command!")
+            return
+
+        # Check args
+        if not context.args or len(context.args) != 1:
+            await update.message.reply_text(
+                "Usage: /set_edit <seconds>\nExample: /set_edit 300\nRange: 10-3600 seconds"
+            )
+            return
+
+        try:
+            seconds = int(context.args[0])
+            if seconds < 10 or seconds > 3600:
+                await update.message.reply_text("❌ Value must be between 10 and 3600 seconds!")
+                return
+
+            # Update setting
+            from utils.helpers import update_group_setting
+            success = await update_group_setting(chat.id, "auto_delete_edited", seconds)
+
+            if success:
+                await update.message.reply_text(f"✅ Edited messages will be auto-deleted after {seconds} seconds!")
+            else:
+                await update.message.reply_text("❌ Failed to update setting. Try again.")
+        except ValueError:
+            await update.message.reply_text("❌ Please enter a valid number!")
+
+    async def handle_set_autodelete(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle auto-delete time setting."""
+        query = update.callback_query
+        await query.answer()
+
+        group_id = int(query.data.split(":")[-1])
+        user_id = update.effective_user.id
+
+        # Verify admin
+        if not await self._is_admin(group_id, user_id, context):
+            await query.answer("❌ Admin only!", show_alert=True)
+            return
+
+        # Store state
+        context.user_data["awaiting_input"] = {"type": "auto_delete_time", "group_id": group_id}
+
+        await query.edit_message_text(
+            "⏱️ <b>Set Auto-Delete Time</b>\n\n"
+            "Enter time in seconds (10-3600):\n"
+            "Example: <code>60</code> for 1 minute",
+            parse_mode="HTML"
+        )
+
+    async def handle_set_edited_autodelete(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle edited message auto-delete time setting."""
+        query = update.callback_query
+        await query.answer()
+
+        group_id = int(query.data.split(":")[-1])
+        user_id = update.effective_user.id
+
+        if not await self._is_admin(group_id, user_id, context):
+            await query.answer("❌ Admin only!", show_alert=True)
+            return
+
+        context.user_data["awaiting_input"] = {"type": "auto_delete_edited", "group_id": group_id}
+
+        await query.edit_message_text(
+            "✏️ <b>Set Edited Msg Auto-Delete</b>\n\n"
+            "Enter time in seconds (10-3600):\n"
+            "Example: <code>300</code> for 5 minutes",
+            parse_mode="HTML"
+        )
+
+    async def handle_set_threshold(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle toxic threshold setting."""
+        query = update.callback_query
+        await query.answer()
+
+        group_id = int(query.data.split(":")[-1])
+        user_id = update.effective_user.id
+
+        if not await self._is_admin(group_id, user_id, context):
+            await query.answer("❌ Admin only!", show_alert=True)
+            return
+
+        context.user_data["awaiting_input"] = {"type": "toxic_threshold", "group_id": group_id}
+
+        await query.edit_message_text(
+            "⚡ <b>Set Toxic Threshold</b>\n\n"
+            "Enter percentage (1-100):\n"
+            "Example: <code>70</code> for 70%",
+            parse_mode="HTML"
+        )
+
+    async def handle_set_mute_duration(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle mute duration setting."""
+        query = update.callback_query
+        await query.answer()
+
+        group_id = int(query.data.split(":")[-1])
+        user_id = update.effective_user.id
+
+        if not await self._is_admin(group_id, user_id, context):
+            await query.answer("❌ Admin only!", show_alert=True)
+            return
+
+        context.user_data["awaiting_input"] = {"type": "mute_duration", "group_id": group_id}
+
+        await query.edit_message_text(
+            "⏳ <b>Set Mute Duration</b>\n\n"
+            "Enter hours (1-168):\n"
+            "Example: <code>24</code> for 24 hours",
+            parse_mode="HTML"
+        )
+
+    async def handle_set_max_warnings(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle max warnings setting."""
+        query = update.callback_query
+        await query.answer()
+
+        group_id = int(query.data.split(":")[-1])
+        user_id = update.effective_user.id
+
+        if not await self._is_admin(group_id, user_id, context):
+            await query.answer("❌ Admin only!", show_alert=True)
+            return
+
+        context.user_data["awaiting_input"] = {"type": "max_warnings", "group_id": group_id}
+
+        await query.edit_message_text(
+            "📝 <b>Set Max Warnings</b>\n\n"
+            "Enter number (1-10):\n"
+            "Example: <code>3</code> for 3 warnings",
+            parse_mode="HTML"
+        )
+
+    async def handle_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle admin text input for settings."""
+        if not update.effective_user or not update.effective_chat or not update.message or not update.message.text:
+            return
+
+        user_data = context.user_data.get("awaiting_input")
+        if not user_data:
+            return
+
+        group_id = user_data.get("group_id")
+        setting_type = user_data.get("type")
+
+        # Verify admin
+        if not await self._is_admin(group_id, update.effective_user.id, context):
+            await update.message.reply_text("❌ Only admins can change settings!")
+            context.user_data.pop("awaiting_input", None)
+            return
+
+        text = update.message.text.strip()
+
+        try:
+            from utils.helpers import update_group_setting
+
+            if setting_type == "auto_delete_time":
+                value = int(text)
+                if value < 10 or value > 3600:
+                    await update.message.reply_text("❌ Must be between 10-3600 seconds!")
+                    return
+                await update_group_setting(group_id, "auto_delete_time", value)
+                await update.message.reply_text(f"✅ Auto-delete set to {value}s")
+
+            elif setting_type == "auto_delete_edited":
+                value = int(text)
+                if value < 10 or value > 3600:
+                    await update.message.reply_text("❌ Must be between 10-3600 seconds!")
+                    return
+                await update_group_setting(group_id, "auto_delete_edited", value)
+                await update.message.reply_text(f"✅ Edited msg auto-delete set to {value}s")
+
+            elif setting_type == "toxic_threshold":
+                value = int(text)
+                if value < 1 or value > 100:
+                    await update.message.reply_text("❌ Must be between 1-100!")
+                    return
+                await update_group_setting(group_id, "toxic_threshold", value / 100)
+                await update.message.reply_text(f"✅ Toxic threshold set to {value}%")
+
+            elif setting_type == "mute_duration":
+                value = int(text)
+                if value < 1 or value > 168:
+                    await update.message.reply_text("❌ Must be between 1-168 hours!")
+                    return
+                await update_group_setting(group_id, "mute_duration", value)
+                await update.message.reply_text(f"✅ Mute duration set to {value}h")
+
+            elif setting_type == "max_warnings":
+                value = int(text)
+                if value < 1 or value > 10:
+                    await update.message.reply_text("❌ Must be between 1-10!")
+                    return
+                await update_group_setting(group_id, "max_warnings", value)
+                await update.message.reply_text(f"✅ Max warnings set to {value}")
+
+        except ValueError:
+            await update.message.reply_text("❌ Please enter a valid number!")
+        finally:
+            context.user_data.pop("awaiting_input", None)
+
 
     def _parse_callback_payload(self, data: str, expected_prefix: str) -> tuple[str, int] | None:
         parts = data.split(":")
@@ -182,29 +407,45 @@ class AIGovernorBot:
         return False
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle control panel navigation callbacks."""
+        """Handle callback queries."""
         query = update.callback_query
-        if not query or not query.data:
+        if not query or not query.data or not update.effective_user:
             return
+
+        user_id = update.effective_user.id
+
+        # Rate limiting
+        now = time.time()
+        user_clicks = self._button_clicks[user_id]
+        while user_clicks and user_clicks[0] < now - self.settings.BUTTON_CLICK_RATE_LIMIT_WINDOW_SECONDS:
+            user_clicks.popleft()
+        if len(user_clicks) >= self.settings.BUTTON_CLICK_RATE_LIMIT_MAX:
+            await query.answer("⏳ Please slow down!", show_alert=True)
+            return
+        user_clicks.append(now)
+
+        data = query.data
+
+        # Parse callback data
+        if data.startswith("cp:"):
+            parts = data.split(":")
+            if len(parts) >= 3:
+                menu = parts[1]
+                group_id = int(parts[2])
+
+                # Verify admin
+                if not await self._is_admin(group_id, user_id, context):
+                    await query.answer("❌ Admin only!", show_alert=True)
+                    return
+
+                if menu == "close":
+                    await query.message.delete()
+                else:
+                    group = await self._get_group(group_id)
+                    language = group.language if group else "en"
+                    await control_panel.show_menu(update, context, menu, group_id, language)
 
         await query.answer()
-        payload = self._parse_callback_payload(query.data, "cp")
-        if not payload:
-            await query.edit_message_text("Invalid action payload.")
-            return
-
-        menu_name, group_id = payload
-        if await self._rate_limited(query.from_user.id):
-            await query.answer("Too many clicks. Please wait a moment.", show_alert=True)
-            return
-
-        if not await self._is_admin(group_id, query.from_user.id, context):
-            await query.edit_message_text(get_text("not_admin", "en"))
-            return
-
-        group = await self._get_group(group_id)
-        language = group.language if group else "en"
-        await control_panel.show_menu(update, context, menu_name, group_id, language)
 
     async def handle_toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle toggle button callbacks."""

@@ -34,25 +34,27 @@ class ControlPanel:
         self.settings = get_settings()
         self.user_states: Dict[int, MenuState] = {}
         
-    def _get_menu_keyboard(
-        self, 
-        menu_name: str, 
+    async def _get_menu_keyboard(
+        self,
+        menu_name: str,
         group_id: int,
         language: str = "en"
     ) -> InlineKeyboardMarkup:
         """Generate keyboard for specific menu."""
-        
         menus = {
             "main": self._main_menu_buttons,
             "protection": self._protection_menu_buttons,
             "settings": self._settings_menu_buttons,
             "language": self._language_menu_buttons,
         }
-        
+
         builder = menus.get(menu_name, self._main_menu_buttons)
-        return builder(group_id, language)
+        keyboard = builder(group_id, language)
+        if asyncio.iscoroutine(keyboard):
+            return await keyboard
+        return keyboard
     
-    def _main_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
+    async def _main_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("🛡️ ғɪʟᴛᴇʀs", callback_data=f"cp:protection:{group_id}")],
             [InlineKeyboardButton("⚙️ sᴇᴛᴛɪɴɢs", callback_data=f"cp:settings:{group_id}")],
@@ -61,8 +63,10 @@ class ControlPanel:
             [InlineKeyboardButton("❌ ᴄʟᴏsᴇ", callback_data=f"cp:close:{group_id}")],
         ])
     
-    def _protection_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
-        settings = get_group_settings_sync(group_id)
+    async def _protection_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
+        from utils.helpers import get_group_settings
+
+        settings = await get_group_settings(group_id)
         def status(key):
             return "🟢" if settings.get(key, True) else "🔴"
         return InlineKeyboardMarkup([
@@ -285,8 +289,10 @@ class ControlPanel:
         return InlineKeyboardMarkup(keyboard)
     
 
-    def _settings_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
-        settings = get_group_settings_sync(group_id)
+    async def _settings_menu_buttons(self, group_id: int, language: str) -> InlineKeyboardMarkup:
+        from utils.helpers import get_group_settings
+
+        settings = await get_group_settings(group_id)
         return InlineKeyboardMarkup([
             [InlineKeyboardButton(f"⏱️ ᴀᴜᴛᴏ-ᴅᴇʟ: {settings.get('auto_delete_time', 60)}s", callback_data=f"cp_action:set_autodelete:{group_id}")],
             [InlineKeyboardButton(f"📝 ᴇᴅɪᴛᴇᴅ ᴀᴜᴛᴏ-ᴅᴇʟ: {settings.get('auto_delete_edited', 300)}s", callback_data=f"cp_action:set_edited_autodelete:{group_id}")],
@@ -456,7 +462,18 @@ class ControlPanel:
                 await query.answer(get_text("not_admin", language), show_alert=True)
             return
 
-        keyboard = self._get_menu_keyboard(menu_name, group_id, language)
+        # Get keyboard based on menu type
+        if menu_name == "main":
+            keyboard = await self._main_menu_buttons(group_id, language)
+        elif menu_name == "protection":
+            keyboard = await self._protection_menu_buttons(group_id, language)
+        elif menu_name == "settings":
+            keyboard = await self._settings_menu_buttons(group_id, language)
+        elif menu_name == "language":
+            keyboard = self._language_menu_buttons(group_id, language)
+        else:
+            keyboard = await self._main_menu_buttons(group_id, language)
+
         text = self.get_menu_text(menu_name, language)
 
         try:
@@ -475,26 +492,9 @@ class ControlPanel:
         except BadRequest as exc:
             if "Message is not modified" in str(exc):
                 if query:
-                    await query.answer("No changes to display.")
+                    await query.answer("No changes.")
                 return
             raise
-
-
-def get_group_settings_sync(group_id: int) -> Dict:
-    from utils.helpers import settings as app_settings
-    return {
-        "text_filter": True,
-        "image_filter": True,
-        "sticker_filter": True,
-        "gif_filter": True,
-        "link_filter": True,
-        "auto_delete": True,
-        "auto_delete_time": app_settings.AUTO_DELETE_BOT_MSG,
-        "auto_delete_edited": app_settings.AUTO_DELETE_EDITED,
-        "toxic_threshold": 0.7,
-        "mute_duration": 24,
-        "max_warnings": 3,
-    }
 
 # Global control panel instance
 control_panel = ControlPanel()
