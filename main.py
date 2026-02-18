@@ -15,8 +15,8 @@ from telegram import Update
 from telegram.ext import MessageHandler, filters
 
 from settings import get_settings
-from core.bot import governor_bot
-from handlers.moderator import (
+from bot import governor_bot
+from moderator import (
     moderate_animation,
     moderate_edited_photo,
     moderate_edited_text,
@@ -25,8 +25,8 @@ from handlers.moderator import (
     moderate_text,
     moderate_video,
 )
-from models.database import db_manager
-from services.ai_service import moderation_service
+from database import db_manager
+from ai_service import moderation_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

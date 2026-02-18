@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ChatMemberStatus, ChatType
 
 # Path check kar lena sahi hai ya nahi
-from services.ai_service import ai_moderation_service 
+from ai_moderation import ai_moderation_service
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # edited_message bhi handle karte hain
     message = update.message or update.edited_message
+    user = update.effective_user
     if not message or user.is_bot:
         return
 
@@ -24,7 +25,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     chat = update.effective_chat
-    user = update.effective_user
 
     # 1. ADMIN PROTECTION: Admins/Owners ke messages check nahi karne chahiye
     if chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:

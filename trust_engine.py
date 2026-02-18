@@ -97,7 +97,7 @@ class TrustEngine:
             return self.settings.TRUST_INITIAL
         
         try:
-            from models.database import GroupUser
+            from database import GroupUser
             result = await db_session.execute(
                 select(GroupUser).where(
                     GroupUser.user_id == user_id,
@@ -137,7 +137,7 @@ class TrustEngine:
             return
         
         try:
-            from models.database import GroupUser
+            from database import GroupUser
             from sqlalchemy import update
             
             await db_session.execute(
