@@ -86,7 +86,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "action_deleted": "Message deleted",
         
         # Errors
-        "not_admin": "You must be an admin to use this.",
+        "not_admin": "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\nʏᴏᴜ ᴀʀᴇ ɴᴏᴛ ᴀɴ ᴀᴅᴍɪɴ ɪɴ ᴛʜɪs ɢʀᴏᴜᴘ.",
         "permission_denied": "Permission denied.",
         "group_not_found": "Group not found in database.",
         "violation_removed": "◆ ᴄᴏɴᴛᴇɴᴛ ʀᴇᴍᴏᴠᴇᴅ 🚫",
@@ -165,7 +165,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "action_banned": "उपयोगकर्ता प्रतिबंधित",
         "action_deleted": "संदेश हटाया गया",
         
-        "not_admin": "इसका उपयोग करने के लिए आपको एडमिन होना चाहिए।",
+        "not_admin": "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\nआप इस ग्रुप में एडमिन नहीं हैं।",
         "permission_denied": "अनुमति अस्वीकृत।",
         "group_not_found": "समूह डेटाबेस में नहीं मिला।",
         "violation_removed": "◆ ᴄᴏɴᴛᴇɴᴛ ʀᴇᴍᴏᴠᴇᴅ 🚫",
@@ -224,7 +224,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "action_banned": "User ban ho gaya",
         "action_deleted": "Message delete ho gaya",
         
-        "not_admin": "Admin hona zaroori hai.",
+        "not_admin": "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\nTum admin nahi ho is group mein.",
         "permission_denied": "Permission nahi hai.",
         "group_not_found": "Group database mein nahi mila.",
         "violation_removed": "◆ ᴄᴏɴᴛᴇɴᴛ ʀᴇᴍᴏᴠᴇᴅ 🚫",

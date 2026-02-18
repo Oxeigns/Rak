@@ -73,6 +73,7 @@ class AIGovernorBot:
         app = self.application
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
+        app.add_handler(CommandHandler("guide", self.cmd_guide))
         app.add_handler(CommandHandler("set_edit", self.cmd_set_edit_autodelete))
 
         app.add_handler(CallbackQueryHandler(self.handle_toggle, pattern=r"^cp_toggle:"))
@@ -154,13 +155,88 @@ class AIGovernorBot:
         chat = update.effective_chat
         user = update.effective_user
 
+        if chat.type == ChatType.PRIVATE:
+            msg = await update.message.reply_text(
+                "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\n"
+                "ᴛʜɪs ᴄᴏᴍᴍᴀɴᴅ ᴄᴀɴ ᴏɴʟʏ ʙᴇ ᴜsᴇᴅ ɪɴ ɢʀᴏᴜᴘs.\n\n"
+                "ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ᴀɴᴅ ᴜsᴇ /ᴘᴀɴᴇʟ ᴛʜᴇʀᴇ.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("• ᴀᴅᴅ ᴍᴇ ᴛᴏ ɢʀᴏᴜᴘ •", url=f"https://t.me/{context.bot.username}?startgroup=true")]]
+                ),
+            )
+            asyncio.create_task(auto_delete_message(msg, 60))
+            return
+
         if not await self._is_admin(chat.id, user.id, context):
-            await update.message.reply_text(get_text("not_admin", "en"))
+            msg = await update.message.reply_text(
+                "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\n"
+                "ʏᴏᴜ ᴀʀᴇ ɴᴏᴛ ᴀɴ ᴀᴅᴍɪɴ ɪɴ ᴛʜɪs ɢʀᴏᴜᴘ.\n\n"
+                "ᴏɴʟʏ ɢʀᴏᴜᴘ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴛʜᴇ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ."
+            )
+            asyncio.create_task(auto_delete_message(msg, 30))
+            return
+
+        if not await ensure_user_joined(update, context):
             return
 
         group = await self._get_group(chat.id)
         language = group.language if group else "en"
         await control_panel.show_menu(update, context, "main", chat.id, language)
+
+    async def cmd_guide(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show helper guide for admins."""
+        if not update.effective_chat or not update.effective_user or not update.message:
+            return
+
+        chat = update.effective_chat
+        user = update.effective_user
+
+        if chat.type != ChatType.PRIVATE and not await self._is_admin(chat.id, user.id, context):
+            msg = await update.message.reply_text("❌ Only admins can use this command!")
+            asyncio.create_task(auto_delete_message(msg, 30))
+            return
+
+        guide_text = """◆ ʀᴀᴋsʜᴀᴋ ᴀɪ - ᴀᴅᴍɪɴ ɢᴜɪᴅᴇ 📖
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚘ ǫᴜɪᴄᴋ sᴛᴀʀᴛ :-\n\n1️⃣ ᴀᴅᴅ ʙᴏᴛ ᴛᴏ ɢʀᴏᴜᴘ\n2️⃣ ᴍᴀᴋᴇ ʙᴏᴛ ᴀᴅᴍɪɴ\n3️⃣ ᴜsᴇ /ᴘᴀɴᴇʟ ᴛᴏ ᴏᴘᴇɴ sᴇᴛᴛɪɴɢs\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚘ ᴄᴏᴍᴍᴀɴᴅs :-\n\n• /panel - ᴏᴘᴇɴ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ\n• /set_edit <s> - ᴇᴅɪᴛᴇᴅ ᴍsɢ ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ\n• /guide - sʜᴏᴡ ᴛʜɪs ʜᴇʟᴘ\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚘ sᴇᴛᴛɪɴɢs ᴇxᴘʟᴀɪɴᴇᴅ :-\n\n🛡️ ғɪʟᴛᴇʀs
+• ᴛᴇxᴛ - ᴀɪ ᴄᴏɴᴛᴇɴᴛ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ
+• ɪᴍᴀɢᴇ - ɴsғᴡ/ᴠɪᴏʟᴇɴᴄᴇ ᴅᴇᴛᴇᴄᴛɪᴏɴ
+• sᴛɪᴄᴋᴇʀ - sᴛɪᴄᴋᴇʀ ᴀɴᴀʟʏsɪs
+• ɢɪғ - ɢɪғ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ
+• ʟɪɴᴋ - sᴜsᴘɪᴄɪᴏᴜs ʟɪɴᴋs
+
+⚙️ sᴇᴛᴛɪɴɢs
+• ᴀᴜᴛᴏ-ᴅᴇʟ - ʙᴏᴛ ᴍsɢ ᴅᴇʟᴇᴛᴇ ᴛɪᴍᴇ
+• ᴇᴅɪᴛᴇᴅ ᴀᴜᴛᴏ-ᴅᴇʟ - ᴇᴅɪᴛᴇᴅ ᴍsɢ ᴅᴇʟᴇᴛᴇ ᴛɪᴍᴇ
+• ᴛʜʀᴇsʜᴏʟᴅ - ᴀɪ sᴇɴsɪᴛɪᴠɪᴛʏ
+• ᴍᴜᴛᴇ - ᴍᴜᴛᴇ ᴅᴜʀᴀᴛɪᴏɴ
+• ᴡᴀʀɴɪɴɢs - ᴍᴀx ᴡᴀʀɴɪɴɢs ʙᴇғᴏʀᴇ ᴍᴜᴛᴇ
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚘ ʜᴏᴡ ᴛᴏ ᴄᴏɴғɪɢᴜʀᴇ :-\n\n1. ᴄʟɪᴄᴋ ᴀɴʏ sᴇᴛᴛɪɴɢ ʙᴜᴛᴛᴏɴ\n2. ᴇɴᴛᴇʀ ʏᴏᴜʀ ᴠᴀʟᴜᴇ\n3. ᴅᴏɴᴇ!\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• ғᴏʀ sᴜᴘᴘᴏʀᴛ, ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ •"""
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("• ᴏᴘᴇɴ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ •", callback_data=f"cp:main:{chat.id}")],
+                [InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ ᴄʜᴀɴɴᴇʟ", url=self.settings.SUPPORT_CHANNEL_LINK)],
+            ]
+        )
+
+        msg = await context.bot.send_message(
+            chat_id=chat.id,
+            text=guide_text,
+            reply_markup=keyboard,
+        )
+        asyncio.create_task(auto_delete_message(msg, 600))
 
     async def cmd_set_edit_autodelete(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Set edited message auto-delete time via command."""
@@ -178,14 +254,14 @@ class AIGovernorBot:
         # Check args
         if not context.args or len(context.args) != 1:
             await update.message.reply_text(
-                "Usage: /set_edit <seconds>\nExample: /set_edit 300\nRange: 10-3600 seconds"
+                "Usage: /set_edit <seconds>\nExample: /set_edit 300\nRange: 0-10000 seconds (0 = disable)"
             )
             return
 
         try:
             seconds = int(context.args[0])
-            if seconds < 10 or seconds > 3600:
-                await update.message.reply_text("❌ Value must be between 10 and 3600 seconds!")
+            if seconds < 0 or seconds > 10000:
+                await update.message.reply_text("❌ Value must be between 0 and 10000 seconds!")
                 return
 
             # Update setting
@@ -217,7 +293,8 @@ class AIGovernorBot:
 
         await query.edit_message_text(
             "⏱️ <b>Set Auto-Delete Time</b>\n\n"
-            "Enter time in seconds (10-3600):\n"
+            "Enter time in seconds (0-10000):\n"
+            "<code>0</code> = Disable auto-delete\n"
             "Example: <code>60</code> for 1 minute",
             parse_mode="HTML"
         )
@@ -238,7 +315,8 @@ class AIGovernorBot:
 
         await query.edit_message_text(
             "✏️ <b>Set Edited Msg Auto-Delete</b>\n\n"
-            "Enter time in seconds (10-3600):\n"
+            "Enter time in seconds (0-10000):\n"
+            "<code>0</code> = Disable auto-delete\n"
             "Example: <code>300</code> for 5 minutes",
             parse_mode="HTML"
         )
@@ -331,16 +409,16 @@ class AIGovernorBot:
 
             if setting_type == "auto_delete_time":
                 value = int(text)
-                if value < 10 or value > 3600:
-                    await update.message.reply_text("❌ Must be between 10-3600 seconds!")
+                if value < 0 or value > 10000:
+                    await update.message.reply_text("❌ Must be between 0-10000 seconds!")
                     return
                 await update_group_setting(group_id, "auto_delete_time", value)
                 await update.message.reply_text(f"✅ Auto-delete set to {value}s")
 
             elif setting_type == "auto_delete_edited":
                 value = int(text)
-                if value < 10 or value > 3600:
-                    await update.message.reply_text("❌ Must be between 10-3600 seconds!")
+                if value < 0 or value > 10000:
+                    await update.message.reply_text("❌ Must be between 0-10000 seconds!")
                     return
                 await update_group_setting(group_id, "auto_delete_edited", value)
                 await update.message.reply_text(f"✅ Edited msg auto-delete set to {value}s")
@@ -448,7 +526,7 @@ class AIGovernorBot:
         await query.answer()
 
     async def handle_toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle toggle button callbacks."""
+        """Handle toggle callbacks with better error messages."""
         query = update.callback_query
         if not query or not query.data:
             return
@@ -460,11 +538,14 @@ class AIGovernorBot:
 
         setting_name, group_id = payload
         if await self._rate_limited(query.from_user.id):
-            await query.answer("Too many clicks. Please wait a moment.", show_alert=True)
+            await query.answer("⏳ Please slow down!", show_alert=True)
             return
 
         if not await self._is_admin(group_id, query.from_user.id, context):
-            await query.answer(get_text("not_admin", "en"), show_alert=True)
+            await query.answer(
+                "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\nʏᴏᴜ ᴀʀᴇ ɴᴏᴛ ᴀɴ ᴀᴅᴍɪɴ ɪɴ ᴛʜɪs ɢʀᴏᴜᴘ.",
+                show_alert=True,
+            )
             return
 
         setting_columns = {
