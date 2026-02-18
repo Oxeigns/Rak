@@ -25,17 +25,8 @@ class CommandHandlers:
     """Mixin for command handlers."""
 
     def _support_buttons(self: "AIGovernorBot") -> list[list[InlineKeyboardButton]]:
-        """Build support buttons, including optional secondary support channel."""
-        rows: list[list[InlineKeyboardButton]] = []
-        primary = getattr(self.settings, "SUPPORT_CHANNEL_LINK", "")
-        secondary = getattr(self.settings, "SUPPORT_CHANNEL_LINK_2", "")
-
-        if primary:
-            rows.append([InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ", url=primary)])
-        if secondary and secondary != primary:
-            rows.append([InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ 2", url=secondary)])
-
-        return rows
+        """Build support buttons with a single official support URL."""
+        return [[InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ", url="https://t.me/aghoris")]]
 
     async def cmd_start(self: "AIGovernorBot", update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command with premium minimal UI."""

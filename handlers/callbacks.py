@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 from sqlalchemy import select
 
 from database import Group, GroupSettings, db_manager
-from helpers import verify_join_callback
+from helpers import update_group_setting, verify_join_callback
 from control_panel import control_panel
 from i18n import get_text
 
@@ -207,10 +207,31 @@ class CallbackHandlers:
             "daily_q": (Group, Group.engagement_enabled),
             "analytics": (Group, Group.analytics_enabled),
         }
+        custom_toggles = {
+            "text_filter",
+            "image_filter",
+            "sticker_filter",
+            "gif_filter",
+            "link_filter",
+            "auto_delete",
+        }
 
         setting_target = setting_columns.get(setting_name)
         if setting_target is None:
-            await query.answer(f"Setting '{setting_name}' is not supported yet.", show_alert=True)
+            if setting_name not in custom_toggles:
+                await query.answer(f"Setting '{setting_name}' is not supported yet.", show_alert=True)
+                return
+
+            group = await self._get_group(group_id)
+            language = group.language if group else "en"
+            from helpers import get_group_settings
+            settings = await get_group_settings(group_id)
+            current_value = bool(settings.get(setting_name, True))
+            if not await update_group_setting(group_id, setting_name, not current_value):
+                await query.answer("Failed to update setting.", show_alert=True)
+                return
+            await query.answer(f"{setting_name} {'enabled' if not current_value else 'disabled'}")
+            await control_panel.show_menu(update, context, "protection", group_id, language)
             return
 
         model_cls, column = setting_target
@@ -263,6 +284,22 @@ class CallbackHandlers:
             except BadRequest as exc:
                 if "Message is not modified" not in str(exc):
                     raise
+            return
+
+        if action_name == "stats":
+            total_groups = await self._get_total_groups()
+            total_violations = await self._get_total_violations()
+            try:
+                await query.edit_message_text(
+                    "📊 <b>Bot Stats</b>\n\n"
+                    f"• Total Groups: <b>{total_groups}</b>\n"
+                    f"• Total Violations: <b>{total_violations}</b>",
+                    parse_mode="HTML",
+                )
+            except BadRequest as exc:
+                if "Message is not modified" not in str(exc):
+                    raise
+            return
 
     async def handle_language(self: "AIGovernorBot", update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle language selection."""
