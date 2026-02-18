@@ -107,7 +107,7 @@ class AIGovernorBot(CommandHandlers, CallbackHandlers, MessageHandlers):
             self.handle_text_input,
             block=False
         ))
-        app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, self.handle_message))
+        app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, self.handle_message))
 
         app.add_error_handler(self.handle_error)
         self._handlers_registered = True

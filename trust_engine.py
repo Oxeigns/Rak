@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import asyncio
 
+from sqlalchemy import select
+
 from settings import get_settings
 
 
