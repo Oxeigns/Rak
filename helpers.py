@@ -137,3 +137,104 @@ async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         # FIX: Show alert instead of sending more messages
         await query.answer("❌ Abhi join detect nahi hua. Pehle channel join karo aur phir 'Done' dabao.", show_alert=True)
+
+
+import asyncio
+from datetime import datetime
+
+
+async def auto_delete_message(message, delay_seconds: int):
+    if not message:
+        return
+    await asyncio.sleep(delay_seconds)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+async def get_group_settings(group_id: int) -> dict:
+    from models.database import Group, GroupSettings, db_manager
+    from sqlalchemy import select
+
+    default = {
+        "group_id": group_id,
+        "language": "en",
+        "text_filter": True,
+        "image_filter": True,
+        "sticker_filter": True,
+        "gif_filter": True,
+        "link_filter": True,
+        "auto_delete": True,
+        "auto_delete_time": settings.AUTO_DELETE_BOT_MSG,
+        "auto_delete_violation": settings.AUTO_DELETE_VIOLATION,
+        "auto_delete_edited": settings.AUTO_DELETE_EDITED,
+        "toxic_threshold": 0.7,
+        "mute_duration": 24,
+        "max_warnings": 3,
+    }
+
+    try:
+        async with db_manager.get_session() as session:
+            group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
+            gs = (await session.execute(select(GroupSettings).where(GroupSettings.group_id == group_id))).scalar_one_or_none()
+            if group:
+                default["language"] = group.language or "en"
+                default["strict_mode"] = bool(group.strict_mode)
+            if gs:
+                default["ai_moderation_enabled"] = bool(gs.ai_moderation_enabled)
+            return default
+    except Exception:
+        return default
+
+
+async def update_group_setting(group_id: int, setting: str, value):
+    from models.database import Group, GroupSettings, db_manager
+    from sqlalchemy import select
+
+    group_fields = {"language", "strict_mode", "crypto_shield", "deep_media_analysis", "engagement_enabled", "analytics_enabled"}
+    gs_fields = {"ai_moderation_enabled", "ai_context_window", "ai_personality_strength"}
+
+    try:
+        async with db_manager.get_session() as session:
+            if setting in group_fields:
+                row = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
+                if not row:
+                    return False
+                setattr(row, setting, value)
+            elif setting in gs_fields:
+                row = (await session.execute(select(GroupSettings).where(GroupSettings.group_id == group_id))).scalar_one_or_none()
+                if not row:
+                    row = GroupSettings(group_id=group_id)
+                    session.add(row)
+                setattr(row, setting, value)
+            else:
+                return False
+            await session.commit()
+            return True
+    except Exception:
+        return False
+
+
+async def get_all_groups() -> list:
+    from models.database import Group, db_manager
+    from sqlalchemy import select
+
+    try:
+        async with db_manager.get_session() as session:
+            rows = (await session.execute(select(Group.id))).all()
+            return [int(row[0]) for row in rows]
+    except Exception:
+        return []
+
+
+async def get_all_users() -> list:
+    from models.database import User, db_manager
+    from sqlalchemy import select
+
+    try:
+        async with db_manager.get_session() as session:
+            rows = (await session.execute(select(User.id))).all()
+            return [int(row[0]) for row in rows]
+    except Exception:
+        return []

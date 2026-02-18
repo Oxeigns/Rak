@@ -16,7 +16,15 @@ from telegram.ext import MessageHandler, filters
 
 from config.settings import get_settings
 from core.bot import governor_bot
-from handlers.moderator import moderate_photo, moderate_text
+from handlers.moderator import (
+    moderate_animation,
+    moderate_edited_photo,
+    moderate_edited_text,
+    moderate_photo,
+    moderate_sticker,
+    moderate_text,
+    moderate_video,
+)
 from models.database import db_manager
 from services.ai_service import moderation_service
 
@@ -27,9 +35,14 @@ settings = get_settings()
 
 
 def register_message_handler() -> None:
-    """Register dual-level moderation handlers in telegram application."""
+    """Register moderation handlers in telegram application."""
     governor_bot.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, moderate_text))
     governor_bot.application.add_handler(MessageHandler(filters.PHOTO, moderate_photo))
+    governor_bot.application.add_handler(MessageHandler(filters.Sticker.ALL, moderate_sticker))
+    governor_bot.application.add_handler(MessageHandler(filters.ANIMATION, moderate_animation))
+    governor_bot.application.add_handler(MessageHandler(filters.VIDEO, moderate_video))
+    governor_bot.application.add_handler(MessageHandler(filters.TEXT & filters.UpdateType.EDITED_MESSAGE, moderate_edited_text))
+    governor_bot.application.add_handler(MessageHandler(filters.PHOTO & filters.UpdateType.EDITED_MESSAGE, moderate_edited_photo))
 
 
 @asynccontextmanager

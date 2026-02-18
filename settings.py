@@ -25,15 +25,33 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "")
     PORT: int = int(os.getenv("PORT", "8000"))
 
-    # Force-join configuration
-    FORCE_JOIN_CHANNEL_ID: int = int(os.getenv("FORCE_JOIN_CHANNEL_ID", "-1002574289485"))
-    FORCE_JOIN_CHANNEL_LINK: str = os.getenv("FORCE_JOIN_CHANNEL_LINK", "https://t.me/aghoris")
-    
-    # AI API Configuration (PROPER SECURE LOADING)
-    # No hardcoded keys here. Set GROQ_API_KEY in Heroku/Settings.
+    # ALL FROM ENVIRONMENT - NO HARDCODED
+    OWNER_ID: int = int(os.getenv("OWNER_ID", "0"))
+    LOG_GROUP_ID: int = int(os.getenv("LOG_GROUP_ID", "0"))
+    FORCE_CHANNEL_ID: int = int(os.getenv("FORCE_CHANNEL_ID", "0"))
+    FORCE_CHANNEL_LINK: str = os.getenv("FORCE_CHANNEL_LINK", "")
+    SUPPORT_CHANNEL_LINK: str = os.getenv("SUPPORT_CHANNEL_LINK", "https://t.me/support")
+
+    # Backward compatible aliases
+    FORCE_JOIN_CHANNEL_ID: int = FORCE_CHANNEL_ID
+    FORCE_JOIN_CHANNEL_LINK: str = FORCE_CHANNEL_LINK
+
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     HUGGINGFACE_TOKEN: str = os.getenv("HUGGINGFACE_TOKEN", "")
+
+    # Auto-Delete (seconds)
+    AUTO_DELETE_BOT_MSG: int = int(os.getenv("AUTO_DELETE_BOT_MSG", "60"))
+    AUTO_DELETE_EDITED: int = int(os.getenv("AUTO_DELETE_EDITED", "300"))
+    AUTO_DELETE_VIOLATION: int = int(os.getenv("AUTO_DELETE_VIOLATION", "30"))
+    AUTO_DELETE_WELCOME: int = int(os.getenv("AUTO_DELETE_WELCOME", "60"))
+
+    # Self-Promotion (hours)
+    GROUP_PROMOTION_INTERVAL: int = int(os.getenv("GROUP_PROMOTION_INTERVAL", "12"))
+    DM_PROMOTION_INTERVAL: int = int(os.getenv("DM_PROMOTION_INTERVAL", "24"))
+
+    # MongoDB (optional compatibility)
+    MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017/bot")
 
     # Model Configuration
     GROQ_TEXT_MODERATION_MODEL: str = "llama-3.3-70b-versatile"
@@ -123,8 +141,8 @@ class Settings(BaseSettings):
 
     # Safety and cache limits
     AI_MODERATION_CACHE_MAXSIZE: int = int(os.getenv("AI_MODERATION_CACHE_MAXSIZE", "2000"))
-    BUTTON_CLICK_RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("BUTTON_CLICK_RATE_LIMIT_WINDOW_SECONDS", "2"))
-    BUTTON_CLICK_RATE_LIMIT_MAX: int = int(os.getenv("BUTTON_CLICK_RATE_LIMIT_MAX", "8"))
+    BUTTON_CLICK_RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("BUTTON_CLICK_RATE_LIMIT_WINDOW_SECONDS", "10"))
+    BUTTON_CLICK_RATE_LIMIT_MAX: int = int(os.getenv("BUTTON_CLICK_RATE_LIMIT_MAX", "5"))
     IMAGE_MAX_BYTES: int = int(os.getenv("IMAGE_MAX_BYTES", str(20 * 1024 * 1024)))
     
     class Config:
