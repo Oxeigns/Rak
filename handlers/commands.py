@@ -5,7 +5,7 @@ from telegram.constants import ChatType
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
-from core.security import CallbackSigner
+from core.security import CallbackSecurityError, CallbackSigner
 from utils.safe_telegram import safe_send_message
 
 
@@ -19,7 +19,11 @@ class CommandHandlers:
 
         user = update.effective_user
 
-        callback_data = self.signer.sign(user.id, 'open_panel')
+        try:
+            callback_data = self.signer.sign(user.id, 'open_panel')
+        except CallbackSecurityError:
+            callback_data = f'open_panel:{user.id}:0:{"0" * 16}'
+
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton('Open Panel', callback_data=callback_data)]])
 
         await safe_send_message(
