@@ -1,170 +1,102 @@
-"""
-AI Governor Bot - Main Application Entry Point
-Production-ready FastAPI server with webhook/polling support
-"""
+from __future__ import annotations
 
 import asyncio
-import hmac
 import logging
-import os
-from contextlib import asynccontextmanager, suppress
 
-import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response
 from telegram import Update
-from telegram.ext import MessageHandler, filters
-
-from settings import get_settings
-from bot import governor_bot
-from moderator import (
-    moderate_animation,
-    moderate_edited_photo,
-    moderate_edited_text,
-    moderate_photo,
-    moderate_sticker,
-    moderate_text,
-    moderate_video,
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    TypeHandler,
+    filters,
 )
-from database import db_manager
-from ai_service import moderation_service
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+from core.config import ConfigError, get_config
+from core.logging_setup import setup_logging
+from core.middleware import ForceJoinMiddleware
+from core.permissions import PermissionValidationError, validate_startup_permissions
+from core.security import CallbackSigner, CooldownManager, UserRateLimiter
+from handlers.callbacks import CallbackHandlers
+from handlers.commands import CommandHandlers
+from handlers.moderation import ModerationHandlers
+
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
+
+class BotContainer:
+    def __init__(self) -> None:
+        self.config = get_config()
+        self.signer = CallbackSigner(secret=self.config.CALLBACK_SECRET, ttl_seconds=self.config.CALLBACK_TTL_SECONDS)
+        self.rate_limiter = UserRateLimiter(
+            window_seconds=self.config.SPAM_WINDOW_SECONDS,
+            max_requests=self.config.SPAM_MAX_REQUESTS,
+        )
+        self.cooldown = CooldownManager(self.config.COOLDOWN_SECONDS)
+
+        self.commands = CommandHandlers(self.signer)
+        self.callbacks = CallbackHandlers(self.signer)
+        self.moderation = ModerationHandlers()
+        self.middleware = ForceJoinMiddleware(self.config, self.rate_limiter, self.cooldown)
 
 
-def register_message_handler() -> None:
-    """Register moderation handlers in telegram application."""
-    governor_bot.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, moderate_text))
-    governor_bot.application.add_handler(MessageHandler(filters.PHOTO, moderate_photo))
-    governor_bot.application.add_handler(MessageHandler(filters.Sticker.ALL, moderate_sticker))
-    governor_bot.application.add_handler(MessageHandler(filters.ANIMATION, moderate_animation))
-    governor_bot.application.add_handler(MessageHandler(filters.VIDEO, moderate_video))
-    governor_bot.application.add_handler(MessageHandler(filters.TEXT & filters.UpdateType.EDITED_MESSAGE, moderate_edited_text))
-    governor_bot.application.add_handler(MessageHandler(filters.PHOTO & filters.UpdateType.EDITED_MESSAGE, moderate_edited_photo))
+def build_application(container: BotContainer) -> Application:
+    app = ApplicationBuilder().token(container.config.BOT_TOKEN).build()
+
+    app.add_handler(TypeHandler(Update, container.middleware), group=-1)
+    app.add_handler(CommandHandler('start', container.commands.start))
+    app.add_handler(CommandHandler('panel', container.commands.panel))
+    app.add_handler(CommandHandler('report', container.moderation.report))
+
+    app.add_handler(CallbackQueryHandler(container.callbacks.handle_force_join_verify, pattern=r'^force_join:verify$'))
+    app.add_handler(CallbackQueryHandler(container.callbacks.secure_callback, pattern=r'^v1\|'))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, container.moderation.moderate_text))
+    app.add_error_handler(global_error_handler)
+    return app
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan handler."""
-    app.state.polling_task = None
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id if isinstance(update, Update) and update.effective_user else None
+    chat_id = update.effective_chat.id if isinstance(update, Update) and update.effective_chat else None
 
+    err = context.error
+    if isinstance(err, RetryAfter):
+        logger.warning('RetryAfter in handler.', extra={'user_id': user_id, 'chat_id': chat_id, 'action': 'handler_error', 'error_type': type(err).__name__})
+    elif isinstance(err, (BadRequest, Forbidden, NetworkError, TelegramError)):
+        logger.error('Telegram handler failure.', exc_info=err, extra={'user_id': user_id, 'chat_id': chat_id, 'action': 'handler_error', 'error_type': type(err).__name__})
+    else:
+        logger.exception('Unexpected non-telegram failure.', extra={'user_id': user_id, 'chat_id': chat_id, 'action': 'handler_error', 'error_type': type(err).__name__ if err else 'Unknown'})
+
+
+async def run() -> None:
+    container = BotContainer()
+    setup_logging(container.config.LOG_LEVEL)
+    app = build_application(container)
+
+    await app.initialize()
     try:
-        logger.info("Starting AI Governor Bot...")
-
-        await db_manager.initialize()
-        await db_manager.create_tables()
-        logger.info("Database initialized")
-
-        await moderation_service.initialize()
-        logger.info("AI service initialized")
-
-        await governor_bot.initialize()
-        await governor_bot.application.initialize()
-        register_message_handler()
-
-        if settings.WEBHOOK_URL:
-            await governor_bot.application.bot.set_webhook(
-                url=settings.WEBHOOK_URL,
-                secret_token=settings.WEBHOOK_SECRET or None,
-                allowed_updates=Update.ALL_TYPES,
-            )
-            logger.info("Webhook mode enabled at %s", settings.WEBHOOK_URL)
-        else:
-            await governor_bot.application.start()
-            app.state.polling_task = asyncio.create_task(
-                governor_bot.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-            )
-            logger.info("Bot started in polling mode")
-
-        yield
-
-    except Exception:
-        logger.exception("Fatal error during startup")
+        await validate_startup_permissions(app.bot, container.config)
+    except (ConfigError, PermissionValidationError):
+        logger.critical('Startup validation failed. Bot is stopping.', exc_info=True, extra={'action': 'startup_validate'})
+        await app.shutdown()
         raise
-    finally:
-        logger.info("Shutting down AI Governor Bot...")
 
-        try:
-            if governor_bot.application:
-                if settings.WEBHOOK_URL:
-                    await governor_bot.application.bot.delete_webhook(drop_pending_updates=False)
-                else:
-                    if app.state.polling_task:
-                        await governor_bot.application.updater.stop()
-                        app.state.polling_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await app.state.polling_task
-
-                if governor_bot.application.running:
-                    await governor_bot.application.stop()
-                await governor_bot.application.shutdown()
-        except Exception:
-            logger.exception("Error while stopping Telegram application")
-
-        await moderation_service.cleanup()
-        await db_manager.close()
-        logger.info("Shutdown complete")
+    if container.config.WEBHOOK_URL:
+        await app.bot.set_webhook(url=container.config.WEBHOOK_URL, secret_token=container.config.WEBHOOK_SECRET or None)
+        await app.start()
+        logger.info('Webhook mode active.', extra={'action': 'startup'})
+        await asyncio.Event().wait()
+    else:
+        await app.start()
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info('Polling mode active.', extra={'action': 'startup'})
+        await asyncio.Event().wait()
 
 
-app = FastAPI(
-    title="AI Governor Bot",
-    description="Revolutionary AI-Powered Telegram Group Management",
-    version=settings.BOT_VERSION,
-    lifespan=lifespan,
-)
-
-
-@app.get("/")
-async def root():
-    return {"status": "operational", "bot": settings.BOT_NAME, "version": settings.BOT_VERSION}
-
-
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "timestamp": asyncio.get_event_loop().time(),
-    }
-
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    """Telegram webhook endpoint with secret verification and safe update parsing."""
-    if not settings.WEBHOOK_URL:
-        raise HTTPException(status_code=404, detail="Webhook mode is disabled")
-
-    if settings.WEBHOOK_SECRET:
-        header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if not hmac.compare_digest(header_secret or "", settings.WEBHOOK_SECRET):
-            raise HTTPException(status_code=403, detail="Invalid webhook secret")
-
-    try:
-        payload = await request.json()
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
-
-    try:
-        update = Update.de_json(payload, governor_bot.application.bot)
-    except Exception as exc:
-        logger.exception("Failed to parse webhook update")
-        raise HTTPException(status_code=400, detail="Invalid update payload") from exc
-
-    await governor_bot.application.process_update(update)
-    return Response(status_code=200)
-
-
-@app.get("/api/stats")
-async def get_stats():
-    return {
-        "groups_managed": 0,
-        "messages_processed": 0,
-        "violations_detected": 0,
-        "users_protected": 0,
-    }
-
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, workers=1, reload=False)
+if __name__ == '__main__':
+    asyncio.run(run())
