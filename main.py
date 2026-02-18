@@ -58,7 +58,7 @@ def build_application(container: BotContainer) -> Application:
     app.add_handler(CommandHandler('report', container.moderation.report))
 
     app.add_handler(CallbackQueryHandler(container.callbacks.handle_force_join_verify, pattern=r'^force_join:verify$'))
-    app.add_handler(CallbackQueryHandler(container.callbacks.secure_callback, pattern=r'^[a-z_]+:\d+:\d+:[a-f0-9]{64}$'))
+    app.add_handler(CallbackQueryHandler(container.callbacks.secure_callback, pattern=r'^[a-z_]+:\d+:\d+:[a-f0-9]{16}$'))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, container.moderation.moderate_text))
     app.add_error_handler(global_error_handler)
