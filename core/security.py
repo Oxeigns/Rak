@@ -12,6 +12,8 @@ class CallbackSecurityError(ValueError):
 
 
 class CallbackSigner:
+    _SIGNATURE_HEX_LENGTH = 16
+
     def __init__(self, secret: str, ttl_seconds: int, allowed_actions: set[str]) -> None:
         self._secret = secret.encode('utf-8')
         self._ttl = ttl_seconds
@@ -21,7 +23,9 @@ class CallbackSigner:
 
     def _signature(self, action: str, owner_user_id: int, issued_at: int) -> str:
         payload = f'{action}:{owner_user_id}:{issued_at}'.encode('utf-8')
-        return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
+        # Telegram callback_data has a strict 64-byte limit, so keep the
+        # signature compact while preserving tamper detection.
+        return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()[: self._SIGNATURE_HEX_LENGTH]
 
     def sign(self, owner_user_id: int, action: str) -> str:
         if action not in self._allowed_actions:
