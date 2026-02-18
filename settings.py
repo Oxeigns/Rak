@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     FORCE_CHANNEL_ID: int = int(os.getenv("FORCE_CHANNEL_ID", "0"))
     FORCE_CHANNEL_LINK: str = os.getenv("FORCE_CHANNEL_LINK", "")
     SUPPORT_CHANNEL_LINK: str = os.getenv("SUPPORT_CHANNEL_LINK", "https://t.me/support")
+    SUPPORT_CHANNEL_LINK_2: str = os.getenv("SUPPORT_CHANNEL_LINK_2", "https://t.me/aghoris")
 
     # Backward compatible aliases
     FORCE_JOIN_CHANNEL_ID: int = FORCE_CHANNEL_ID
