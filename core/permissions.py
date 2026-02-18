@@ -60,12 +60,13 @@ async def _validate_force_join_channel(bot: Bot, bot_id: int, config: AppConfig)
     if not isinstance(me_member, ChatMemberAdministrator):
         raise PermissionValidationError('Bot must be administrator in force-join channel.')
 
+    # Telegram permission fields can differ by chat type. Enforce only permissions
+    # that are explicitly available and required for force-join operations.
     missing = []
-    if not me_member.can_invite_users:
+    if me_member.can_invite_users is False:
         missing.append('can_invite_users')
-    if not me_member.can_delete_messages:
-        missing.append('can_delete_messages')
-    if not me_member.can_restrict_members:
+
+    if chat.type == ChatType.SUPERGROUP and me_member.can_restrict_members is False:
         missing.append('can_restrict_members')
 
     if missing:
