@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import imghdr
 import json
 import logging
@@ -66,21 +67,83 @@ class ModerationService:
         self.gemini_api_key = self.settings.GEMINI_API_KEY
         self.groq_model = self.settings.GROQ_TEXT_MODERATION_MODEL
         
-        self.gemini_model_name = "gemini-1.5-flash" 
+        self.gemini_model_name = self.settings.GEMINI_IMAGE_MODERATION_MODEL
         self.timeout_seconds = float(self.settings.AI_TIMEOUT)
 
         self._http_client: Optional[httpx.AsyncClient] = None
-        self.GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-        self._gemini_model = None
+        self._gemini_api_version: Optional[str] = None
+        self._gemini_model: Optional[str] = None
         self._gemini_client = None
 
         if self.gemini_api_key:
             try:
                 self._gemini_client = genai.Client(api_key=self.gemini_api_key)
-                self._gemini_model = self.gemini_model_name
-                logger.info(f"Gemini service initialized: {self.gemini_model_name}")
+                logger.info("Gemini client initialized")
             except Exception as e:
                 logger.error(f"Gemini Init Failed: {e}")
+
+    async def _discover_gemini_model(self) -> Optional[str]:
+        if not self._gemini_client:
+            return None
+        if self._gemini_model:
+            return self._gemini_model
+
+        preferred_prefixes = ("gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro")
+
+        def _list_models() -> list[str]:
+            names: list[str] = []
+            for model in self._gemini_client.models.list():
+                name = str(getattr(model, "name", "") or "")
+                methods = [str(method) for method in (getattr(model, "supported_generation_methods", None) or [])]
+                if "generateContent" not in methods:
+                    continue
+                if name.startswith("models/"):
+                    name = name.split("models/", 1)[1]
+                if name:
+                    names.append(name)
+            return names
+
+        try:
+            names = await asyncio.to_thread(_list_models)
+        except Exception as exc:
+            logger.warning("Gemini model discovery failed: %s", exc)
+            self._gemini_model = self.gemini_model_name
+            return self._gemini_model
+
+        for preferred in preferred_prefixes:
+            for name in names:
+                if name.startswith(preferred):
+                    self._gemini_model = name
+                    logger.info("Gemini model selected dynamically: %s", name)
+                    return self._gemini_model
+
+        if names:
+            self._gemini_model = names[0]
+            logger.info("Gemini model selected dynamically: %s", self._gemini_model)
+            return self._gemini_model
+
+        self._gemini_model = self.gemini_model_name
+        return self._gemini_model
+
+    async def _discover_gemini_api_version(self) -> str:
+        if self._gemini_api_version:
+            return self._gemini_api_version
+
+        await self.initialize()
+        headers = {"x-goog-api-key": self.gemini_api_key}
+        for version in ("v1", "v1beta"):
+            url = f"https://generativelanguage.googleapis.com/{version}/models"
+            try:
+                response = await self._http_client.get(url, headers=headers)
+                if response.is_success:
+                    self._gemini_api_version = version
+                    logger.info("Gemini API version selected dynamically: %s", version)
+                    return version
+            except Exception as exc:
+                logger.warning("Gemini API version probe failed for %s: %s", version, exc)
+
+        self._gemini_api_version = "v1beta"
+        return self._gemini_api_version
 
     async def initialize(self) -> None:
         if self._http_client is None:
@@ -164,7 +227,17 @@ class ModerationService:
             return self._normalize_text_response(json.loads(content))
         except Exception as e:
             logger.error(f"Groq Request Error: {e}")
-            return self._safe_result("Safe content, bhai, chill")
+            fallback_result = self._rule_based_error_scan(combined_text)
+            if fallback_result is not None:
+                return fallback_result
+            return {
+                "is_safe": False,
+                "toxic_score": 0.0,
+                "illegal_score": 0.5,
+                "spam_score": 0.0,
+                "reason": "AI moderation error, message blocked for safety",
+                "analysis_error": True,
+            }
 
     async def analyze_image(self, image_bytes: bytes) -> Dict[str, Any]:
         """Analyze image with Gemini 1.5 Flash."""
@@ -180,9 +253,13 @@ class ModerationService:
             "Flag drugs/narcotics, NSFW nudity, scams/phishing QR and violence/weapons/gore."
         )
 
-        def _call_gemini(model_name: str):
+        model_name = await self._discover_gemini_model()
+        if not model_name:
+            return {"is_safe": False, "reason": "Gemini model unavailable", "analysis_error": True}
+
+        def _call_gemini(selected_model: str):
             res = self._gemini_client.models.generate_content(
-                model=model_name,
+                model=selected_model,
                 contents=[
                     {"inline_data": {"mime_type": mime_type, "data": image_bytes}},
                     prompt,
@@ -192,13 +269,12 @@ class ModerationService:
             return json.loads(res.text)
 
         try:
-            result = await asyncio.to_thread(_call_gemini, self._gemini_model)
+            result = await asyncio.to_thread(_call_gemini, model_name)
             return self._normalize_image_response(result)
         except google_exceptions.NotFound:
             try:
-                logger.warning("Retrying Gemini with full path...")
-                fallback_model = "models/gemini-1.5-flash"
-                result = await asyncio.to_thread(_call_gemini, fallback_model)
+                logger.warning("Retrying Gemini with explicit model path...")
+                result = await asyncio.to_thread(_call_gemini, f"models/{model_name}")
                 return self._normalize_image_response(result)
             except Exception:
                 return {"is_safe": False, "reason": "Model 404", "analysis_error": True}
@@ -211,7 +287,7 @@ class ModerationService:
             return {"is_safe": True}
 
         await self.initialize()
-        image_base64 = __import__("base64").b64encode(sticker_bytes).decode("utf-8")
+        image_base64 = base64.b64encode(sticker_bytes).decode("utf-8")
         prompt = """Analyze sticker for: NSFW, violence, hate symbols, drugs, vulgar gestures.
 Return JSON: {"is_safe": true/false, "reason": "brief"}"""
         try:
@@ -226,7 +302,7 @@ Return JSON: {"is_safe": true/false, "reason": "brief"}"""
             return {"is_safe": True}
 
         await self.initialize()
-        image_base64 = __import__("base64").b64encode(anim_bytes).decode("utf-8")
+        image_base64 = base64.b64encode(anim_bytes).decode("utf-8")
         prompt = """Analyze GIF for: NSFW, violence, offensive gestures, flashing, hate symbols.
 Return JSON: {"is_safe": true/false, "reason": "brief"}"""
         try:
@@ -238,7 +314,10 @@ Return JSON: {"is_safe": true/false, "reason": "brief"}"""
 
     async def _call_gemini_vision(self, image_base64: str, prompt: str, mime_type: str) -> Dict:
         await self.initialize()
-        url = f"{self.GEMINI_API_BASE}/models/gemini-1.5-flash:generateContent"
+        api_version = await self._discover_gemini_api_version()
+        model_name = await self._discover_gemini_model()
+        model_path = model_name if model_name and model_name.startswith("models/") else f"models/{model_name or self.gemini_model_name}"
+        url = f"https://generativelanguage.googleapis.com/{api_version}/{model_path}:generateContent"
         params = {"key": self.gemini_api_key}
         body = {
             "contents": [{
@@ -317,6 +396,27 @@ Return JSON: {"is_safe": true/false, "reason": "brief"}"""
                     "illegal_score": 1.0,
                     "spam_score": 0.0,
                     "reason": reason,
+                }
+        return None
+
+    @staticmethod
+    def _rule_based_error_scan(text: str) -> Optional[Dict[str, Any]]:
+        lowered = text.lower()
+        patterns = {
+            "Bhai, drugs ki baatein mana hain": r"\b(drugs?|ganja|weed|charas|heroin|mdma|meth|pills?)\b",
+            "Bhai, ye content NSFW hain": r"\b(nsfw|porn|nude|sex|xxx|onlyfans)\b",
+            "Bhai, ye scam ya fraud hain": r"\b(scam|fraud|phishing|crypto\s+qr|get\s+rich\s+quick|double\s+money)\b",
+            "Bhai, ye bahut violent hain, mana hain": r"\b(kill|murder|behead|gore|shoot\s+him|death\s+threat)\b",
+        }
+        for reason, pattern in patterns.items():
+            if re.search(pattern, lowered):
+                return {
+                    "is_safe": False,
+                    "toxic_score": 0.8,
+                    "illegal_score": 1.0,
+                    "spam_score": 0.2,
+                    "reason": reason,
+                    "analysis_error": True,
                 }
         return None
 
