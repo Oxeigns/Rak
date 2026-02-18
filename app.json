@@ -27,15 +27,15 @@
       "required": true
     },
     "API_ID": {
-      "description": "Telegram API ID from my.telegram.org/apps",
+      "description": "35335474",
       "required": true
     },
     "API_HASH": {
-      "description": "Telegram API Hash from my.telegram.org/apps",
+      "description": "65c9d8d32a75ba9af8cc401d940b5957",
       "required": true
     },
     "OWNER_ID": {
-      "description": "Telegram user ID of bot owner (required for owner-only controls)",
+      "description": "1888832817",
       "required": true
     },
     "LOG_GROUP_ID": {
@@ -43,20 +43,20 @@
       "required": true
     },
     "FORCE_CHANNEL_ID": {
-      "description": "Telegram channel ID that users must join before using the bot",
-      "required": false
+      "description": "-1002574289485",
+      "required": true
     },
     "FORCE_CHANNEL_LINK": {
-      "description": "Public invite/join link for the force-subscribe channel",
-      "required": false
+      "description": "https://t.me/aghoris",
+      "required": true
     },
     "GROQ_API_KEY": {
       "description": "Groq API key for text moderation (optional if using HF Router only)",
-      "required": false
+      "required": true
     },
     "GEMINI_API_KEY": {
       "description": "Gemini API key for image moderation (optional)",
-      "required": false
+      "required": true
     },
     "HUGGINGFACE_TOKEN": {
       "description": "Hugging Face token for router-based moderation (optional)",
