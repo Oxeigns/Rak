@@ -24,12 +24,31 @@ logger = logging.getLogger(__name__)
 class CommandHandlers:
     """Mixin for command handlers."""
 
+    def _support_buttons(self: "AIGovernorBot") -> list[list[InlineKeyboardButton]]:
+        """Build support buttons, including optional secondary support channel."""
+        rows: list[list[InlineKeyboardButton]] = []
+        primary = getattr(self.settings, "SUPPORT_CHANNEL_LINK", "")
+        secondary = getattr(self.settings, "SUPPORT_CHANNEL_LINK_2", "")
+
+        if primary:
+            rows.append([InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ", url=primary)])
+        if secondary and secondary != primary:
+            rows.append([InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ 2", url=secondary)])
+
+        return rows
+
     async def cmd_start(self: "AIGovernorBot", update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command with premium minimal UI."""
         if not update.effective_chat or not update.effective_user:
             return
 
         chat = update.effective_chat
+
+        # In groups, keep /start behavior same as /panel to avoid inconsistent flows.
+        if chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            await self.cmd_panel(update, context)
+            return
+
         if chat.type == ChatType.PRIVATE and not await ensure_user_joined(update, context):
             return
 
@@ -61,7 +80,7 @@ class CommandHandlers:
         keyboard = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("• ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ •", url=f"https://t.me/{context.bot.username}?startgroup=true")],
-                [InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ", url=self.settings.SUPPORT_CHANNEL_LINK)],
+                *self._support_buttons(),
             ]
         )
         msg = await context.bot.send_message(chat_id=chat.id, text=welcome_text, reply_markup=keyboard)
@@ -171,7 +190,7 @@ class CommandHandlers:
         keyboard = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("• ᴏᴘᴇɴ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ •", callback_data=f"cp:main:{chat.id}")],
-                [InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ ᴄʜᴀɴɴᴇʟ", url=self.settings.SUPPORT_CHANNEL_LINK)],
+                *self._support_buttons(),
             ]
         )
 

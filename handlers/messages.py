@@ -177,8 +177,13 @@ class MessageHandlers:
             logger.exception("Error in message moderation: %s", exc)
 
     async def handle_error(self: "AIGovernorBot", update: object, context: ContextTypes.DEFAULT_TYPE):
-        """Handle errors in handlers."""
-        logger.error("Exception while handling an update:", exc_info=context.error)
+        """Handle errors in handlers with richer diagnostics."""
+        logger.error(
+            "Exception while handling an update | update=%r | error=%r",
+            update,
+            context.error,
+            exc_info=context.error,
+        )
 
         if isinstance(update, Update) and update.effective_message:
             try:

@@ -78,6 +78,7 @@ class AIGovernorBot(CommandHandlers, CallbackHandlers, MessageHandlers):
         app = self.application
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
+        app.add_handler(CommandHandler("pannel", self.cmd_panel))
         app.add_handler(CommandHandler("guide", self.cmd_guide))
         app.add_handler(CommandHandler("set_edit", self.cmd_set_edit_autodelete))
 
