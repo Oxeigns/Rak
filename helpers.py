@@ -143,7 +143,7 @@ from datetime import datetime
 
 
 async def auto_delete_message(message, delay_seconds: int):
-    if not message:
+    if not message or delay_seconds <= 0:
         return
     await asyncio.sleep(delay_seconds)
     try:

@@ -76,16 +76,20 @@ class AIGovernorBot:
         app.add_handler(CommandHandler("guide", self.cmd_guide))
         app.add_handler(CommandHandler("set_edit", self.cmd_set_edit_autodelete))
 
-        app.add_handler(CallbackQueryHandler(self.handle_toggle, pattern=r"^cp_toggle:"))
-        # Settings callbacks
+        # Most-specific callbacks first
         app.add_handler(CallbackQueryHandler(self.handle_set_autodelete, pattern=r"^cp_action:set_autodelete:"))
         app.add_handler(CallbackQueryHandler(self.handle_set_edited_autodelete, pattern=r"^cp_action:set_edited_autodelete:"))
         app.add_handler(CallbackQueryHandler(self.handle_set_threshold, pattern=r"^cp_action:set_threshold:"))
         app.add_handler(CallbackQueryHandler(self.handle_set_mute_duration, pattern=r"^cp_action:set_mute_duration:"))
         app.add_handler(CallbackQueryHandler(self.handle_set_max_warnings, pattern=r"^cp_action:set_max_warnings:"))
+
+        # Pattern callbacks
+        app.add_handler(CallbackQueryHandler(self.handle_toggle, pattern=r"^cp_toggle:"))
         app.add_handler(CallbackQueryHandler(self.handle_action, pattern=r"^cp_action:"))
         app.add_handler(CallbackQueryHandler(self.handle_language, pattern=r"^cp_language:"))
         app.add_handler(CallbackQueryHandler(self.handle_personality, pattern=r"^cp_personality:"))
+
+        # Generic callback last
         app.add_handler(CallbackQueryHandler(self.handle_callback, pattern=r"^cp:"))
         app.add_handler(CallbackQueryHandler(verify_join_callback, pattern=r"^verify_join$"))
 
@@ -192,7 +196,10 @@ class AIGovernorBot:
         user = update.effective_user
 
         if chat.type != ChatType.PRIVATE and not await self._is_admin(chat.id, user.id, context):
-            msg = await update.message.reply_text("❌ Only admins can use this command!")
+            msg = await update.message.reply_text(
+                "◆ ᴀᴄᴄᴇss ᴅᴇɴɪᴇᴅ 🚫\n\n"
+                "ᴏɴʟʏ ᴀᴅᴍɪɴs ᴄᴀɴ ᴜsᴇ ᴛʜɪs ᴄᴏᴍᴍᴀɴᴅ!"
+            )
             asyncio.create_task(auto_delete_message(msg, 30))
             return
 

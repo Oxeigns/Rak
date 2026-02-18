@@ -5,6 +5,7 @@ Clean Version: Removed hardcoded secrets for security.
 
 import os
 from typing import List, Dict, Any
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -145,6 +146,20 @@ class Settings(BaseSettings):
     BUTTON_CLICK_RATE_LIMIT_MAX: int = int(os.getenv("BUTTON_CLICK_RATE_LIMIT_MAX", "5"))
     IMAGE_MAX_BYTES: int = int(os.getenv("IMAGE_MAX_BYTES", str(20 * 1024 * 1024)))
     
+    @field_validator("BOT_TOKEN")
+    @classmethod
+    def check_bot_token(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("BOT_TOKEN environment variable is required!")
+        return v
+
+    @field_validator("API_ID")
+    @classmethod
+    def check_api_id(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("API_ID environment variable must be a positive integer!")
+        return v
+
     class Config:
         env_file = ".env"
         case_sensitive = True
