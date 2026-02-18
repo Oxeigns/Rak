@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
-from config.settings import get_settings
+from settings import get_settings
 
 
 @dataclass

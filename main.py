@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from telegram import Update
 from telegram.ext import MessageHandler, filters
 
-from config.settings import get_settings
+from settings import get_settings
 from core.bot import governor_bot
 from handlers.moderator import (
     moderate_animation,

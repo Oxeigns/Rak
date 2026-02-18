@@ -25,7 +25,7 @@ from telegram.ext import (
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from config.settings import get_settings
+from settings import get_settings
 from models.database import Group, GroupSettings, GroupType, GroupUser, Message, PersonalityMode, RiskLevel, User, db_manager
 from services.ai_moderation import ai_moderation_service
 from services.anti_raid import anti_raid_system

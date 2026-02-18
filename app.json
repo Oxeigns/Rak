@@ -34,6 +34,22 @@
       "description": "Telegram API Hash from my.telegram.org/apps",
       "required": true
     },
+    "OWNER_ID": {
+      "description": "Telegram user ID of bot owner (required for owner-only controls)",
+      "required": true
+    },
+    "LOG_GROUP_ID": {
+      "description": "Telegram group/channel ID where bot logs and alerts are sent",
+      "required": true
+    },
+    "FORCE_CHANNEL_ID": {
+      "description": "Telegram channel ID that users must join before using the bot",
+      "required": false
+    },
+    "FORCE_CHANNEL_LINK": {
+      "description": "Public invite/join link for the force-subscribe channel",
+      "required": false
+    },
     "GROQ_API_KEY": {
       "description": "Groq API key for text moderation (optional if using HF Router only)",
       "required": false

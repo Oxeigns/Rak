@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import asyncio
 
-from config.settings import get_settings
+from settings import get_settings
 
 
 @dataclass
