@@ -1,16 +1,14 @@
 {
   "name": "AI Governor Bot",
-  "description": "Revolutionary AI-powered Telegram group management bot with Groq (Text) & Gemini (Image) AI.",
-  "repository": "https://github.com/Oxeigns/Governer",
-  "logo": "https://raw.githubusercontent.com/Oxeigns/Governer/main/assets/logo.png",
+  "description": "AI-powered Telegram moderation bot with FastAPI webhook support.",
+  "repository": "https://github.com/Oxeigns/Rak",
   "keywords": [
     "telegram",
     "bot",
     "ai",
     "moderation",
-    "groq",
-    "gemini",
-    "vision-ai"
+    "fastapi",
+    "python"
   ],
   "stack": "heroku-22",
   "addons": [
@@ -37,17 +35,25 @@
       "required": true
     },
     "GROQ_API_KEY": {
-      "description": "Your Groq API Key for Text Moderation",
-      "required": true
+      "description": "Groq API key for text moderation (optional if using HF Router only)",
+      "required": false
     },
     "GEMINI_API_KEY": {
-      "description": "Your Google Gemini API Key for Image Moderation",
-      "required": true
+      "description": "Gemini API key for image moderation (optional)",
+      "required": false
+    },
+    "HUGGINGFACE_TOKEN": {
+      "description": "Hugging Face token for router-based moderation (optional)",
+      "required": false
     },
     "WEBHOOK_SECRET": {
       "description": "Random secret for webhook verification",
       "generator": "secret",
-      "required": true
+      "required": false
+    },
+    "WEBHOOK_URL": {
+      "description": "Public HTTPS webhook URL (optional; leave empty to use polling)",
+      "required": false
     },
     "SENTRY_DSN": {
       "description": "Sentry DSN for error tracking (optional)",
@@ -58,8 +64,5 @@
     {
       "url": "heroku/python"
     }
-  ],
-  "scripts": {
-    "postdeploy": "python -m scripts.init_db"
-  }
+  ]
 }
