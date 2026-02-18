@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ChatMemberStatus, ChatType
 
 # Path check kar lena sahi hai ya nahi
-from ai_moderation import ai_moderation_service
+from ai_services import ai_moderation_service
 
 logger = logging.getLogger(__name__)
 

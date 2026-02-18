@@ -12,7 +12,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import GroupUser, db_manager
-from ai_service import moderation_service
+from ai_services import moderation_service
 from helpers import auto_delete_message, ensure_user_joined, get_group_settings
 
 logger = logging.getLogger(__name__)

@@ -14,8 +14,8 @@ from sqlalchemy import select
 
 from database import GroupUser, db_manager
 from helpers import update_group_setting
-from ai_moderation import ai_moderation_service
-from ai_service import moderation_service
+from ai_services import ai_moderation_service
+from ai_services import moderation_service
 from anti_raid import anti_raid_system
 from risk_engine import risk_engine
 
