@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
+from telegram.constants import ChatMemberStatus
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
@@ -18,9 +19,42 @@ class CallbackHandlers:
 
     async def handle_force_join_verify(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
-        if not query or not update.effective_user:
+        user = update.effective_user
+        if not query or not user:
             return
-        await query.answer('Verification is automatic. Retry your command.')
+
+        try:
+            member = await context.bot.get_chat_member(context.application.bot_data['force_join_channel_id'], user.id)
+            if member.status in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER}:
+                await query.answer('Membership verified. Please retry your command.')
+                return
+            await query.answer('Join the required channel first.', show_alert=True)
+        except RetryAfter as exc:
+            await query.answer('Verification is rate-limited. Please retry shortly.', show_alert=True)
+            logger.warning(
+                'RetryAfter while verifying force-join from callback.',
+                extra={
+                    'user_id': user.id,
+                    'chat_id': query.message.chat_id if query.message else None,
+                    'action': 'force_join_verify',
+                    'handler_name': 'CallbackHandlers.handle_force_join_verify',
+                    'error_type': type(exc).__name__,
+                },
+                exc_info=exc,
+            )
+        except (BadRequest, Forbidden, NetworkError, TelegramError) as exc:
+            await query.answer('Verification failed. Please retry in a moment.', show_alert=True)
+            logger.error(
+                'Failed force-join callback verification.',
+                extra={
+                    'user_id': user.id,
+                    'chat_id': query.message.chat_id if query.message else None,
+                    'action': 'force_join_verify',
+                    'handler_name': 'CallbackHandlers.handle_force_join_verify',
+                    'error_type': type(exc).__name__,
+                },
+                exc_info=exc,
+            )
 
     async def secure_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -30,13 +64,17 @@ class CallbackHandlers:
 
         try:
             await self.signer.verify(query.data or '', user.id, required_action='open_panel')
-            await safe_edit_message(
+            edit_result = await safe_edit_message(
                 query,
                 text='Secure panel opened successfully.',
                 action='secure_callback',
                 user_id=user.id,
                 handler_name='CallbackHandlers.secure_callback',
             )
+            if edit_result is None:
+                await query.answer('This panel message is stale. Please run /start again.', show_alert=True)
+                return
+
             await query.answer('Done')
         except CallbackSecurityError as exc:
             await query.answer(str(exc), show_alert=True)

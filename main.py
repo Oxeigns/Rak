@@ -50,6 +50,7 @@ class BotContainer:
 
 def build_application(container: BotContainer) -> Application:
     app = ApplicationBuilder().token(container.config.BOT_TOKEN).build()
+    app.bot_data['force_join_channel_id'] = container.config.FORCE_JOIN_CHANNEL_ID
 
     app.add_handler(TypeHandler(Update, container.middleware), group=-1)
     app.add_handler(CommandHandler('start', container.commands.start))

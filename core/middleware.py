@@ -108,7 +108,21 @@ class ForceJoinMiddleware:
 
         query = update.callback_query
         if query:
-            await query.answer('Join channel first.', show_alert=True)
+            try:
+                await query.answer('Join channel first.', show_alert=True)
+            except (RetryAfter, BadRequest, Forbidden, NetworkError, TelegramError) as exc:
+                logger.warning(
+                    'Failed answering force-join callback prompt.',
+                    extra={
+                        'user_id': user_id,
+                        'chat_id': query.message.chat_id if query.message else None,
+                        'action': 'force_join_prompt_callback_answer',
+                        'handler_name': 'ForceJoinMiddleware._prompt_force_join',
+                        'error_type': type(exc).__name__,
+                    },
+                    exc_info=exc,
+                )
+
             if query.message:
                 await safe_send_message(
                     context,

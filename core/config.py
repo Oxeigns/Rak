@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import AliasChoices, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,8 +15,8 @@ class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', case_sensitive=True, extra='ignore')
 
     BOT_TOKEN: str = Field(min_length=30)
-    FORCE_JOIN_CHANNEL: str = Field(min_length=2)
-    FORCE_JOIN_CHANNEL_ID: int = Field(lt=0)
+    FORCE_JOIN_CHANNEL: str = Field(min_length=2, validation_alias=AliasChoices('FORCE_JOIN_CHANNEL', 'FORCE_CHANNEL_LINK'))
+    FORCE_JOIN_CHANNEL_ID: int = Field(lt=0, validation_alias=AliasChoices('FORCE_JOIN_CHANNEL_ID', 'FORCE_CHANNEL_ID'))
     CALLBACK_SECRET: str = Field(min_length=16)
     ADMIN_IDS: str = Field(min_length=1)
 
@@ -56,6 +56,25 @@ class AppConfig(BaseSettings):
         if len(channel) < 2:
             raise ConfigError('FORCE_JOIN_CHANNEL must be a valid Telegram username (e.g., @my_channel).')
         return channel
+
+    @field_validator('FORCE_JOIN_CHANNEL_ID', mode='before')
+    @classmethod
+    def normalize_channel_id(cls, value: Any) -> int:
+        if value is None or value == '':
+            raise ConfigError('FORCE_JOIN_CHANNEL_ID is required and must be a numeric Telegram channel ID.')
+
+        raw = str(value).strip()
+        if not raw:
+            raise ConfigError('FORCE_JOIN_CHANNEL_ID cannot be empty.')
+
+        try:
+            channel_id = int(raw)
+        except ValueError as exc:
+            raise ConfigError('FORCE_JOIN_CHANNEL_ID must be a numeric Telegram channel ID (e.g., -1001234567890).') from exc
+
+        if channel_id >= 0:
+            raise ConfigError('FORCE_JOIN_CHANNEL_ID must be a negative channel/supergroup ID (e.g., -1001234567890).')
+        return channel_id
 
     @field_validator('ADMIN_IDS', mode='before')
     @classmethod
