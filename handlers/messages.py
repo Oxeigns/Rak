@@ -4,20 +4,20 @@ Contains message processing, new member handling, and chat member updates.
 """
 
 import logging
+import io
 from typing import TYPE_CHECKING
 
 from telegram import Update
 from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 
-from database import Group, GroupUser, Message, RiskLevel, User, db_manager
-from helpers import auto_delete_message, update_group_setting
+from database import GroupUser, db_manager
+from helpers import update_group_setting
 from ai_moderation import ai_moderation_service
+from ai_service import moderation_service
 from anti_raid import anti_raid_system
 from risk_engine import risk_engine
-from trust_engine import trust_engine
 
 if TYPE_CHECKING:
     from bot import AIGovernorBot
@@ -135,19 +135,26 @@ class MessageHandlers:
 
     async def handle_message(self: "AIGovernorBot", update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Process incoming messages with AI moderation."""
-        if not update.effective_message or not update.effective_chat:
+        if not update.effective_message or not update.effective_chat or not update.effective_user:
             return
 
         message = update.effective_message
         chat = update.effective_chat
         user = update.effective_user
 
-        # Skip private chats and non-text messages for moderation
-        if chat.type == ChatType.PRIVATE or not message.text:
+        # Skip private chats
+        if chat.type == ChatType.PRIVATE:
             return
 
         # Skip bot messages
-        if user and user.is_bot:
+        if user.is_bot:
+            return
+
+        message_text = message.text or message.caption or ""
+        has_photo = bool(message.photo)
+
+        # Skip unsupported message types
+        if not message_text and not has_photo:
             return
 
         # Ensure group exists in DB
@@ -155,23 +162,84 @@ class MessageHandlers:
 
         # Run AI moderation
         try:
-            risk_assessment = await ai_moderation_service.analyze_message(
-                message.text,
-                chat_id=chat.id,
-                user_id=user.id if user else None,
+            text_result = await moderation_service.analyze_text(
+                text=message.text or "",
+                caption=message.caption,
             )
 
-            if risk_assessment.should_delete:
+            # Secondary check with dedicated moderation service as fallback/consensus.
+            ai_result = await ai_moderation_service.analyze_message(
+                message_text,
+                context={"chat_id": chat.id, "user_id": user.id},
+            )
+
+            image_result = {"is_safe": True, "reason": "Safe"}
+            if has_photo:
+                largest_photo = message.photo[-1]
+                telegram_file = await largest_photo.get_file()
+                buffer = io.BytesIO()
+                await telegram_file.download_to_memory(out=buffer)
+                image_result = await moderation_service.analyze_image(buffer.getvalue())
+
+            ai_analysis = {
+                "spam": max(float(text_result.get("spam_score", 0.0)), float(ai_result.get("spam_score", 0.0))),
+                "toxicity": max(float(text_result.get("toxic_score", 0.0)), float(ai_result.get("toxicity_score", 0.0))),
+                "scam": 0.0,
+                "illegal": max(float(text_result.get("illegal_score", 0.0)), float(ai_result.get("illegal_score", 0.0))),
+                "phishing": 0.0,
+                "nsfw": 1.0 if image_result.get("is_safe") is False else 0.0,
+                "confidence": 0.9,
+            }
+
+            async with db_manager.get_session() as session:
+                membership = (
+                    await session.execute(
+                        select(GroupUser).where(
+                            GroupUser.group_id == chat.id,
+                            GroupUser.user_id == user.id,
+                        )
+                    )
+                ).scalar_one_or_none()
+
+            user_history = {
+                "violations_24h": min((membership.violation_count if membership else 0), 10),
+                "violations_7d": min((membership.violation_count if membership else 0), 25),
+                "total_violations": membership.violation_count if membership else 0,
+                "trust_score": membership.trust_score if membership else 50.0,
+            }
+
+            risk_assessment = await risk_engine.calculate_risk(
+                message_text or "[photo]",
+                user.id,
+                chat.id,
+                ai_analysis,
+                user_history,
+                context={"recent_user_messages": 0, "time_window_seconds": 60},
+            )
+
+            if risk_assessment.decision == "block":
                 await message.delete()
+                if membership:
+                    async with db_manager.get_session() as session:
+                        db_member = (
+                            await session.execute(
+                                select(GroupUser).where(
+                                    GroupUser.group_id == chat.id,
+                                    GroupUser.user_id == user.id,
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if db_member:
+                            db_member.violation_count += 1
+                            await session.commit()
                 await self._handle_violation(update, context, risk_assessment)
                 return
 
-            if risk_assessment.should_warn:
+            if risk_assessment.decision == "warn":
                 await self._handle_warning(update, context, risk_assessment)
 
             # Log message
-            if user:
-                await self._log_message(message, risk_assessment, chat.id, user)
+            await self._log_message(message, risk_assessment, chat.id, user)
 
         except Exception as exc:
             logger.exception("Error in message moderation: %s", exc)
