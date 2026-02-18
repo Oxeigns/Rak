@@ -6,8 +6,8 @@ from telegram import Update
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 
-from core.middleware import safe_edit_message
 from core.security import CallbackSecurityError, CallbackSigner
+from utils.safe_telegram import safe_edit_message
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class CallbackHandlers:
                 text='Secure panel opened successfully.',
                 action='secure_callback',
                 user_id=user.id,
+                handler_name='CallbackHandlers.secure_callback',
             )
             await query.answer('Done')
         except CallbackSecurityError as exc:
@@ -45,12 +46,29 @@ class CallbackHandlers:
                     'user_id': user.id,
                     'chat_id': query.message.chat_id if query.message else None,
                     'action': 'secure_callback',
+                    'handler_name': 'CallbackHandlers.secure_callback',
                     'error_type': type(exc).__name__,
                 },
+                exc_info=exc,
             )
         except RetryAfter as exc:
             await query.answer('Server busy, retry in a moment.', show_alert=True)
-            logger.warning('RetryAfter in secure callback.', extra={'user_id': user.id, 'action': 'secure_callback', 'error_type': type(exc).__name__})
-        except (BadRequest, Forbidden, NetworkError, TelegramError) as exc:
+            logger.warning(
+                'RetryAfter in secure callback.',
+                extra={'user_id': user.id, 'action': 'secure_callback', 'handler_name': 'CallbackHandlers.secure_callback', 'error_type': type(exc).__name__},
+                exc_info=exc,
+            )
+        except BadRequest as exc:
+            await query.answer('Action failed, message is no longer editable.', show_alert=True)
+            logger.error(
+                'BadRequest in secure callback.',
+                extra={'user_id': user.id, 'action': 'secure_callback', 'handler_name': 'CallbackHandlers.secure_callback', 'error_type': type(exc).__name__},
+                exc_info=exc,
+            )
+        except (Forbidden, NetworkError, TelegramError) as exc:
             await query.answer('Action failed, try again.', show_alert=True)
-            logger.error('Telegram error in secure callback.', exc_info=exc, extra={'user_id': user.id, 'action': 'secure_callback', 'error_type': type(exc).__name__})
+            logger.error(
+                'Telegram error in secure callback.',
+                extra={'user_id': user.id, 'action': 'secure_callback', 'handler_name': 'CallbackHandlers.secure_callback', 'error_type': type(exc).__name__},
+                exc_info=exc,
+            )

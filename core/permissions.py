@@ -16,10 +16,11 @@ class PermissionValidationError(RuntimeError):
 
 
 async def validate_startup_permissions(bot: Bot, config: AppConfig) -> None:
-    """Fail-fast startup permission checks for required chats."""
     try:
         me = await bot.get_me()
-    except (NetworkError, RetryAfter, TelegramError) as exc:
+    except RetryAfter as exc:
+        raise PermissionValidationError(f'Telegram RetryAfter while fetching bot identity: {exc.retry_after}') from exc
+    except (NetworkError, TelegramError) as exc:
         raise PermissionValidationError('Unable to fetch bot identity from Telegram API.') from exc
 
     if config.REQUIRE_FORCE_JOIN:
@@ -28,8 +29,8 @@ async def validate_startup_permissions(bot: Bot, config: AppConfig) -> None:
 
 async def _validate_force_join_channel(bot: Bot, bot_id: int, config: AppConfig) -> None:
     chat_id = config.FORCE_JOIN_CHANNEL_ID
-    if not chat_id:
-        raise ConfigError('FORCE_JOIN_CHANNEL_ID is missing.')
+    if chat_id >= 0:
+        raise ConfigError('FORCE_JOIN_CHANNEL_ID must be negative for channels/supergroups.')
 
     try:
         chat = await bot.get_chat(chat_id)
@@ -47,19 +48,30 @@ async def _validate_force_join_channel(bot: Bot, bot_id: int, config: AppConfig)
 
     try:
         me_member = await bot.get_chat_member(chat_id, bot_id)
-    except (BadRequest, Forbidden, RetryAfter, NetworkError, TelegramError) as exc:
+    except RetryAfter as exc:
+        raise PermissionValidationError(f'Telegram retry-after while reading bot permissions: {exc.retry_after}') from exc
+    except (BadRequest, Forbidden, NetworkError, TelegramError) as exc:
         raise PermissionValidationError('Cannot inspect bot membership in force-join channel.') from exc
 
     if isinstance(me_member, ChatMemberOwner):
+        logger.info('Bot is channel owner; all permission checks passed.', extra={'chat_id': chat_id, 'action': 'startup_validate'})
         return
 
     if not isinstance(me_member, ChatMemberAdministrator):
         raise PermissionValidationError('Bot must be administrator in force-join channel.')
 
-    if config.REQUIRE_CHANNEL_ADMIN and not me_member.can_invite_users:
-        raise PermissionValidationError('Bot admin lacks can_invite_users in force-join channel.')
+    missing = []
+    if not me_member.can_invite_users:
+        missing.append('can_invite_users')
+    if not me_member.can_delete_messages:
+        missing.append('can_delete_messages')
+    if not me_member.can_restrict_members:
+        missing.append('can_restrict_members')
 
-    if chat.username and config.FORCE_JOIN_CHANNEL_LINK and chat.username not in config.FORCE_JOIN_CHANNEL_LINK:
-        raise PermissionValidationError('FORCE_JOIN_CHANNEL_LINK does not match FORCE_JOIN_CHANNEL_ID username.')
+    if missing:
+        raise PermissionValidationError(f'Bot admin lacks required force-join permissions: {", ".join(missing)}.')
+
+    if chat.username and f'@{chat.username.lower()}' != config.FORCE_JOIN_CHANNEL.lower():
+        raise PermissionValidationError('FORCE_JOIN_CHANNEL does not match username of FORCE_JOIN_CHANNEL_ID.')
 
     logger.info('Force-join startup validation completed.', extra={'chat_id': chat_id, 'action': 'startup_validate'})
