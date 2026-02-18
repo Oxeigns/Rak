@@ -178,41 +178,65 @@ async def get_group_settings(group_id: int) -> dict:
         async with db_manager.get_session() as session:
             group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
             gs = (await session.execute(select(GroupSettings).where(GroupSettings.group_id == group_id))).scalar_one_or_none()
+
             if group:
                 default["language"] = group.language or "en"
                 default["strict_mode"] = bool(group.strict_mode)
+
             if gs:
                 default["ai_moderation_enabled"] = bool(gs.ai_moderation_enabled)
+                # Load custom config if exists
+                if hasattr(gs, "config") and gs.config:
+                    default.update(gs.config)
+
             return default
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error getting group settings: {e}")
         return default
 
 
 async def update_group_setting(group_id: int, setting: str, value):
-    from models.database import Group, GroupSettings, db_manager
+    """Update group setting with custom field support."""
+    from models.database import GroupSettings, db_manager
     from sqlalchemy import select
 
-    group_fields = {"language", "strict_mode", "crypto_shield", "deep_media_analysis", "engagement_enabled", "analytics_enabled"}
-    gs_fields = {"ai_moderation_enabled", "ai_context_window", "ai_personality_strength"}
+    # Custom settings that don't exist in GroupSettings model
+    custom_settings = {"auto_delete_time", "auto_delete_edited", "auto_delete_violation",
+                       "toxic_threshold", "mute_duration", "max_warnings", "text_filter",
+                       "image_filter", "sticker_filter", "gif_filter", "link_filter", "auto_delete"}
 
     try:
         async with db_manager.get_session() as session:
-            if setting in group_fields:
+            if setting in custom_settings:
+                # Use key-value storage approach
+                # Check if settings row exists
+                stmt = select(GroupSettings).where(GroupSettings.group_id == group_id)
+                result = await session.execute(stmt)
+                gs = result.scalar_one_or_none()
+
+                if not gs:
+                    # Create new settings row
+                    gs = GroupSettings(group_id=group_id)
+                    session.add(gs)
+
+                # Store custom setting in a config dict
+                if not hasattr(gs, "config") or gs.config is None:
+                    gs.config = {}
+
+                gs.config[setting] = value
+                await session.commit()
+                return True
+            else:
+                # Handle standard Group fields
+                from models.database import Group
                 row = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
                 if not row:
                     return False
                 setattr(row, setting, value)
-            elif setting in gs_fields:
-                row = (await session.execute(select(GroupSettings).where(GroupSettings.group_id == group_id))).scalar_one_or_none()
-                if not row:
-                    row = GroupSettings(group_id=group_id)
-                    session.add(row)
-                setattr(row, setting, value)
-            else:
-                return False
-            await session.commit()
-            return True
-    except Exception:
+                await session.commit()
+                return True
+    except Exception as e:
+        logger.error(f"Error updating setting {setting}: {e}")
         return False
 
 

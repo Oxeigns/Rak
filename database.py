@@ -184,6 +184,9 @@ class GroupSettings(Base):
     ai_moderation_enabled = Column(Boolean, default=True)
     ai_context_window = Column(Integer, default=10)
     ai_personality_strength = Column(Float, default=0.7)
+
+    # Dynamic key-value config for custom panel settings
+    config = Column(JSONB, default=dict)
     
     group = relationship("Group", back_populates="settings")
 
