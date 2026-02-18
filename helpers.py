@@ -2,7 +2,7 @@ import logging
 from functools import wraps
 from typing import Awaitable, Callable, TypeVar
 
-from config.settings import get_settings
+from settings import get_settings
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatMemberStatus, ChatType
@@ -29,12 +29,11 @@ _ALLOWED_STATUSES = {
 HandlerFunc = TypeVar("HandlerFunc", bound=Callable[..., Awaitable[None]])
 
 def _force_join_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("📢 Join Official Channel", url=FORCE_JOIN_CHANNEL_LINK)],
-            [InlineKeyboardButton("✅ Done / Verify", callback_data=VERIFY_CALLBACK_DATA)],
-        ]
-    )
+    rows = []
+    if FORCE_JOIN_CHANNEL_LINK:
+        rows.append([InlineKeyboardButton("📢 Join Official Channel", url=FORCE_JOIN_CHANNEL_LINK)])
+    rows.append([InlineKeyboardButton("✅ Done / Verify", callback_data=VERIFY_CALLBACK_DATA)])
+    return InlineKeyboardMarkup(rows)
 
 async def _is_joined(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user = update.effective_user

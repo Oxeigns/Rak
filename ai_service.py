@@ -10,7 +10,7 @@ import httpx
 from google.api_core import exceptions as google_exceptions
 from google import genai
 
-from config.settings import get_settings
+from settings import get_settings
 
 logger = logging.getLogger(__name__)
 

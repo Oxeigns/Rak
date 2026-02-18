@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import asyncio
 
-from config.settings import get_settings, RISK_WEIGHTS
+from settings import get_settings, RISK_WEIGHTS
 
 
 @dataclass

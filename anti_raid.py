@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 import re
 
-from config.settings import get_settings
+from settings import get_settings
 
 
 @dataclass

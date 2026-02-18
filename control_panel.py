@@ -12,7 +12,7 @@ from telegram.constants import ChatMemberStatus
 from telegram.error import BadRequest
 from telegram.ext import CallbackContext
 
-from config.settings import get_settings
+from settings import get_settings
 from utils.i18n import get_text
 
 

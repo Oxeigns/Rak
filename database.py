@@ -19,7 +19,7 @@ from sqlalchemy.orm import relationship, sessionmaker, Session, validates
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
-from config.settings import get_settings
+from settings import get_settings
 
 settings = get_settings()
 
