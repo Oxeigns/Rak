@@ -1,3 +1,3 @@
-from .settings import get_settings, Settings, RISK_WEIGHTS
+from .i18n import get_text, detect_language
 
-__all__ = ["get_settings", "Settings", "RISK_WEIGHTS"]
+__all__ = ["get_text", "detect_language"]
