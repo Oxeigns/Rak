@@ -28,6 +28,11 @@ class ForceJoinMiddleware:
         if not user or not self.config.REQUIRE_FORCE_JOIN:
             return
 
+        message = update.effective_message
+        if message and message.text and message.text.startswith('/start'):
+            # Allow the start handler to render onboarding buttons in all chats.
+            return
+
         if not self.limiter.check(user.id):
             await self._rate_limit_response(update, context)
             raise ApplicationHandlerStop

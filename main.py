@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from telegram import Update
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
@@ -97,10 +98,19 @@ async def run() -> None:
         extra={'action': 'startup_config_report', 'handler_name': 'run', **container.config.startup_report()},
     )
     app = build_application(container)
+    port = int(os.getenv('PORT', '8443'))
 
     await app.initialize()
     try:
-        await validate_startup_permissions(app.bot, container.config)
+        await asyncio.wait_for(validate_startup_permissions(app.bot, container.config), timeout=20)
+    except asyncio.TimeoutError as exc:
+        logger.critical(
+            'Startup permission validation timed out. Bot is stopping.',
+            extra={'action': 'startup_validate', 'handler_name': 'run', 'error_type': type(exc).__name__},
+            exc_info=exc,
+        )
+        await app.shutdown()
+        raise
     except (ConfigError, PermissionValidationError) as exc:
         logger.critical(
             'Startup permission validation failed. Bot is stopping.',
@@ -111,9 +121,29 @@ async def run() -> None:
         raise
 
     if container.config.WEBHOOK_URL:
-        await app.bot.set_webhook(url=container.config.WEBHOOK_URL, secret_token=container.config.WEBHOOK_SECRET or None)
+        await app.bot.set_webhook(
+            url=container.config.WEBHOOK_URL,
+            secret_token=container.config.WEBHOOK_SECRET or None,
+            drop_pending_updates=True,
+        )
+        logger.info(
+            'Webhook mode active.',
+            extra={
+                'action': 'startup',
+                'handler_name': 'run',
+                'webhook_url': container.config.WEBHOOK_URL,
+                'webhook_port': port,
+            },
+        )
         await app.start()
-        logger.info('Webhook mode active.', extra={'action': 'startup', 'handler_name': 'run'})
+        await app.updater.start_webhook(
+            listen='0.0.0.0',
+            port=port,
+            webhook_url=container.config.WEBHOOK_URL,
+            secret_token=container.config.WEBHOOK_SECRET or None,
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
         await asyncio.Event().wait()
     else:
         await app.start()
