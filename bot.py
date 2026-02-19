@@ -34,6 +34,7 @@ WARNING_LIMIT = 3
 AUTO_MUTE_SECONDS = 600
 SUPPORT_URL = "https://t.me/aghoris"
 SUPPORT_HANDLE = "@aghoris"
+ADMIN_IMAGE_NOTICE = "pls dont send theee images"
 
 
 class ModerationBot:
@@ -221,6 +222,20 @@ class ModerationBot:
         user = update.effective_user
         if not chat or not user:
             return
+
+        if await self._is_admin(context=context, chat_id=chat.id, user_id=user.id):
+            try:
+                await context.bot.send_message(chat_id=chat.id, text=ADMIN_IMAGE_NOTICE)
+            except TelegramError as exc:
+                await self._log_event(
+                    context,
+                    log_type="admin_image_notice_failed",
+                    user_id=user.id,
+                    chat_id=chat.id,
+                    details=str(exc),
+                )
+            return
+
         count = await self.store.increment_warning(chat.id, user.id)
         await self._send_or_edit_warning(context, chat.id, user.id, count, muted=False)
         if count >= WARNING_LIMIT:
