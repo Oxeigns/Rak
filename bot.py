@@ -33,6 +33,7 @@ MAX_DELAY = 86400
 WARNING_LIMIT = 3
 AUTO_MUTE_SECONDS = 600
 SUPPORT_URL = "https://t.me/aghoris"
+SUPPORT_HANDLE = "@aghoris"
 
 
 class ModerationBot:
@@ -82,7 +83,7 @@ class ModerationBot:
         try:
             ts = int(time.time())
             text = (
-                "⚠️ LOG\n"
+                "⚠️ LOG / ERROR\n"
                 f"Type: {log_type}\n"
                 f"User ID: {user_id if user_id is not None else '-'}\n"
                 f"Chat ID: {chat_id if chat_id is not None else '-'}\n"
@@ -97,10 +98,11 @@ class ModerationBot:
         try:
             ts = int(time.time())
             text = (
-                "⚠️ ERROR LOG\n"
+                "⚠️ LOG / ERROR\n"
                 f"Type: {type(error).__name__}\n"
-                f"Error: {error}\n"
-                f"Location: {location}\n"
+                "User ID: -\n"
+                "Chat ID: -\n"
+                f"Details: {location}: {error}\n"
                 f"Timestamp: {ts}"
             )
             await context.bot.send_message(chat_id=self.config.LOG_GROUP_ID, text=text)
@@ -183,9 +185,9 @@ class ModerationBot:
         return awaiting_user == user.id
 
     def _warning_text(self, count: int, user_id: int, muted: bool = False) -> str:
-        text = f"⚠️ Warning ({min(count, WARNING_LIMIT)}/{WARNING_LIMIT})\nReason: Image Violation\n\nUser ID: {user_id}"
+        text = f"⚠️ Warning ({min(count, WARNING_LIMIT)}/{WARNING_LIMIT})\nReason: Image Violation"
         if muted:
-            text += "\n\n🔇 User muted for 10 minutes."
+            return "🔇 User muted for 10 minutes."
         return text
 
     async def _send_or_edit_warning(
@@ -201,7 +203,7 @@ class ModerationBot:
         markup = None
         if muted:
             markup = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔓 Unmute", callback_data=f"unmute:{chat_id}:{user_id}"), InlineKeyboardButton("📢 Support", url=SUPPORT_URL)]]
+                [[InlineKeyboardButton("🔓 Unmute", callback_data=f"unmute:{chat_id}:{user_id}"), InlineKeyboardButton(f"📢 Support ({SUPPORT_HANDLE})", url=SUPPORT_URL)]]
             )
         try:
             if message_id:
@@ -221,7 +223,7 @@ class ModerationBot:
             return
         count = await self.store.increment_warning(chat.id, user.id)
         await self._send_or_edit_warning(context, chat.id, user.id, count, muted=False)
-        if count > WARNING_LIMIT:
+        if count >= WARNING_LIMIT:
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=chat.id,
@@ -368,14 +370,36 @@ class ModerationBot:
                 if not await self._is_admin(context, chat.id, user.id):
                     await query.answer("Only admins can use this.", show_alert=True)
                     return
-                await context.bot.restrict_chat_member(chat_id=chat.id, user_id=cb_user_id, permissions=ChatPermissions(can_send_messages=True, can_send_photos=True, can_send_videos=True, can_send_documents=True, can_send_voice_notes=True, can_send_video_notes=True, can_send_polls=True, can_send_other_messages=True, can_add_web_page_previews=True, can_change_info=False, can_invite_users=True, can_pin_messages=False, can_manage_topics=False))
-                await self.store.reset_warning(chat.id, cb_user_id)
-                await query.edit_message_text(
-                    text=f"✅ User manually unmuted by Admin\n⚠️ Warning counter reset (0/{WARNING_LIMIT})",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Support", url=SUPPORT_URL)]]),
-                )
-                await query.answer("Done")
-                await self._log_event(context, log_type="manual_unmute", user_id=cb_user_id, chat_id=chat.id, details=f"Unmuted by admin {user.id}")
+                try:
+                    await context.bot.restrict_chat_member(
+                        chat_id=chat.id,
+                        user_id=cb_user_id,
+                        permissions=ChatPermissions(
+                            can_send_messages=True,
+                            can_send_photos=True,
+                            can_send_videos=True,
+                            can_send_documents=True,
+                            can_send_voice_notes=True,
+                            can_send_video_notes=True,
+                            can_send_polls=True,
+                            can_send_other_messages=True,
+                            can_add_web_page_previews=True,
+                            can_change_info=False,
+                            can_invite_users=True,
+                            can_pin_messages=False,
+                            can_manage_topics=False,
+                        ),
+                    )
+                    await self.store.reset_warning(chat.id, cb_user_id)
+                    await query.edit_message_text(
+                        text=f"✅ User manually unmuted by Admin\n⚠️ Warning counter reset (0/{WARNING_LIMIT})",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"📢 Support ({SUPPORT_HANDLE})", url=SUPPORT_URL)]]),
+                    )
+                    await query.answer("Done")
+                    await self._log_event(context, log_type="manual_unmute", user_id=cb_user_id, chat_id=chat.id, details=f"Unmuted by admin {user.id}")
+                except TelegramError as exc:
+                    await query.answer("Unmute failed due to permissions.", show_alert=True)
+                    await self._log_event(context, log_type="manual_unmute_failed", user_id=cb_user_id, chat_id=chat.id, details=str(exc))
                 return
 
             await query.answer()
@@ -586,14 +610,24 @@ class ModerationBot:
 
             if self._is_suspicious_name(member.first_name, member.username):
                 await self.store.flag_illegal_user(chat.id, member.id, "Suspicious name pattern")
-                self._schedule_delete(context, chat.id, message.message_id, 5)
-                await self._log_event(
-                    context,
-                    log_type="illegal_name_detection",
-                    user_id=member.id,
-                    chat_id=chat.id,
-                    details=f"Username: {member.username or '-'} | Flag: Suspicious name pattern",
-                )
+                await self._safe_delete_message(context, chat.id, message.message_id)
+                try:
+                    await context.bot.send_message(
+                        chat_id=self.config.LOG_GROUP_ID,
+                        text=(
+                            "🚨 Illegal Name Detected\n"
+                            f"User ID: {member.id}\n"
+                            f"Username: {member.username or '-'}"
+                        ),
+                    )
+                except TelegramError as exc:
+                    await self._log_event(
+                        context,
+                        log_type="illegal_name_detection_log_failed",
+                        user_id=member.id,
+                        chat_id=chat.id,
+                        details=str(exc),
+                    )
 
     async def handle_chat_member_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
