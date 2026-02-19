@@ -29,15 +29,12 @@ from settings import get_settings
 from database import Group, GroupSettings, GroupType, GroupUser, Message, RiskLevel, User, db_manager
 from ai_services import ai_moderation_service
 from anti_raid import anti_raid_system
-from control_panel import control_panel
 from risk_engine import risk_engine
 from trust_engine import trust_engine
 from helpers import (
     auto_delete_message,
     get_all_groups,
     get_all_users,
-    is_user_joined,
-    ensure_user_joined,
     verify_join_callback,
 )
 from i18n import get_text
@@ -79,35 +76,13 @@ class AIGovernorBot(CommandHandlers, CallbackHandlers, MessageHandlers):
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
         app.add_handler(CommandHandler("pannel", self.cmd_panel))
-        app.add_handler(CommandHandler("guide", self.cmd_guide))
-        app.add_handler(CommandHandler("set_edit", self.cmd_set_edit_autodelete))
+        app.add_handler(CommandHandler("setdelay", self.cmd_setdelay))
 
-        # 1. Most specific handlers FIRST (settings with specific sub-actions)
-        app.add_handler(CallbackQueryHandler(self.handle_set_autodelete, pattern=r"^cp_action:set_autodelete:"))
-        app.add_handler(CallbackQueryHandler(self.handle_set_edited_autodelete, pattern=r"^cp_action:set_edited_autodelete:"))
-        app.add_handler(CallbackQueryHandler(self.handle_set_threshold, pattern=r"^cp_action:set_threshold:"))
-        app.add_handler(CallbackQueryHandler(self.handle_set_mute_duration, pattern=r"^cp_action:set_mute_duration:"))
-        app.add_handler(CallbackQueryHandler(self.handle_set_max_warnings, pattern=r"^cp_action:set_max_warnings:"))
-        
-        # 2. Then other pattern handlers (more specific to less specific)
-        app.add_handler(CallbackQueryHandler(self.handle_toggle, pattern=r"^cp_toggle:"))
-        app.add_handler(CallbackQueryHandler(self.handle_action, pattern=r"^cp_action:"))
-        app.add_handler(CallbackQueryHandler(self.handle_language, pattern=r"^cp_language:"))
-        app.add_handler(CallbackQueryHandler(self.handle_personality, pattern=r"^cp_personality:"))
-        
-        # 3. Generic handler LAST (catches remaining cp: patterns)
-        app.add_handler(CallbackQueryHandler(self.handle_callback, pattern=r"^cp:"))
+        app.add_handler(CallbackQueryHandler(self.handle_callback))
         app.add_handler(CallbackQueryHandler(verify_join_callback, pattern=r"^verify_join$"))
 
-        app.add_handler(ChatMemberHandler(self.handle_chat_member, ChatMemberHandler.ANY_CHAT_MEMBER))
-        app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, self.handle_new_members))
-        # Admin text input handler
-        app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
-            self.handle_text_input,
-            block=False
-        ))
         app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, self.handle_message))
+        app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, self.handle_edited_message))
 
         app.add_error_handler(self.handle_error)
         self._handlers_registered = True
