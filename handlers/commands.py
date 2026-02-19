@@ -22,7 +22,7 @@ class CommandHandlers:
     def _support_buttons(self: "AIGovernorBot") -> list[list[InlineKeyboardButton]]:
         """Build support URL button defensively."""
         try:
-            return [[InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ", url="https://t.me/aghoris")]]
+            return [[InlineKeyboardButton("📢 sᴜᴘᴘᴏʀᴛ", url=self.settings.SUPPORT_CHANNEL_LINK)]]
         except Exception:
             return []
 
