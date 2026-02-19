@@ -31,6 +31,7 @@ class ModerationBot:
     def __init__(self) -> None:
         self.config = get_settings()
         self.application = Application.builder().token(self.config.BOT_TOKEN).build()
+        self._delete_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
     async def _is_admin(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
         try:
@@ -56,8 +57,8 @@ class ModerationBot:
             await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         except RetryAfter as exc:
             logger.warning("Delete rate-limited chat=%s message=%s retry_after=%s", chat_id, message_id, exc.retry_after)
-        except (BadRequest, Forbidden, TelegramError):
-            pass
+        except (BadRequest, Forbidden, TelegramError) as exc:
+            logger.debug("Delete skipped chat=%s message=%s error=%s", chat_id, message_id, exc)
         except Exception as exc:
             logger.error("Unexpected delete error chat=%s message=%s error=%s", chat_id, message_id, exc)
 
@@ -68,11 +69,14 @@ class ModerationBot:
         message_id: int,
         delay_seconds: int,
     ) -> None:
+        task_key = (chat_id, message_id)
         try:
             await asyncio.sleep(max(1, delay_seconds))
             await self._safe_delete_message(context=context, chat_id=chat_id, message_id=message_id)
         except Exception as exc:
             logger.error("Delayed delete task failed chat=%s message=%s error=%s", chat_id, message_id, exc)
+        finally:
+            self._delete_tasks.pop(task_key, None)
 
     def _schedule_delete(
         self,
@@ -81,7 +85,12 @@ class ModerationBot:
         message_id: int,
         delay_seconds: int,
     ) -> None:
-        asyncio.create_task(self._delete_after_delay(context, chat_id, message_id, delay_seconds))
+        task_key = (chat_id, message_id)
+        existing_task = self._delete_tasks.get(task_key)
+        if existing_task and not existing_task.done():
+            return
+        task = asyncio.create_task(self._delete_after_delay(context, chat_id, message_id, delay_seconds))
+        self._delete_tasks[task_key] = task
 
     async def _auto_delete_if_needed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message

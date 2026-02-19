@@ -223,8 +223,9 @@ class ModerationService:
             )
             response.raise_for_status()
             data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            return self._normalize_text_response(json.loads(content))
+            content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}")
+            parsed = self._parse_json_like_response(str(content))
+            return self._normalize_text_response(parsed)
         except Exception as e:
             logger.error(f"Groq Request Error: {e}")
             fallback_result = self._rule_based_error_scan(combined_text)
@@ -358,11 +359,17 @@ Return JSON: {"is_safe": true/false, "reason": "brief"}"""
 
     @staticmethod
     def _normalize_text_response(raw: Dict) -> Dict:
+        def _score(value: Any) -> float:
+            try:
+                return max(0.0, min(1.0, float(value)))
+            except (TypeError, ValueError):
+                return 0.0
+
         return {
             "is_safe": bool(raw.get("is_safe", True)),
-            "toxic_score": float(raw.get("toxic_score", raw.get("toxicity_score", 0.0))),
-            "illegal_score": float(raw.get("illegal_score", 0.0)),
-            "spam_score": float(raw.get("spam_score", 0.0)),
+            "toxic_score": _score(raw.get("toxic_score", raw.get("toxicity_score", 0.0))),
+            "illegal_score": _score(raw.get("illegal_score", 0.0)),
+            "spam_score": _score(raw.get("spam_score", 0.0)),
             "reason": str(raw.get("reason", "Safe content, bhai, chill"))
         }
 
@@ -422,6 +429,8 @@ Return JSON: {"is_safe": true/false, "reason": "brief"}"""
 
     @staticmethod
     def _normalize_image_response(raw: Dict) -> Dict:
+        if not isinstance(raw, dict):
+            return {"is_safe": True, "reason": "Safe"}
         return {"is_safe": bool(raw.get("is_safe", True)), "reason": str(raw.get("reason", "Safe"))}
 
 moderation_service = ModerationService()
