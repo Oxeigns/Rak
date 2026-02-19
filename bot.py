@@ -1,386 +1,408 @@
-"""
-AI Governor Bot - Main Bot Handler
-Core message processing and event handling
-"""
-
-import logging
 import asyncio
-import time
-from collections import defaultdict, deque
-from datetime import datetime, timedelta
-from typing import Optional, Tuple
+import logging
+from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ChatType
-from telegram.error import BadRequest, TelegramError
+from telegram.constants import ChatMemberStatus, ChatType
+from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
-    ChatMemberHandler,
     CommandHandler,
     ContextTypes,
+    ConversationHandler,
     MessageHandler,
     filters,
 )
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 
+from ai_services import ai_moderation_service, moderation_service
 from settings import get_settings
-from database import Group, GroupSettings, GroupType, GroupUser, Message, RiskLevel, User, db_manager
-from ai_services import ai_moderation_service
-from anti_raid import anti_raid_system
-from risk_engine import risk_engine
-from trust_engine import trust_engine
-from helpers import (
-    auto_delete_message,
-    get_all_groups,
-    get_all_users,
-    verify_join_callback,
-)
-from i18n import get_text
-
-# Import handlers
-from handlers.commands import CommandHandlers
-from handlers.callbacks import CallbackHandlers
-from handlers.messages import MessageHandlers
 
 logger = logging.getLogger(__name__)
 
+SET_DELAY_VALUE = 1
+DEFAULT_EDIT_DELETE_DELAY = 300
+DEFAULT_AUTO_DELETE_DELAY = 3600
+MIN_DELAY = 1
+MAX_DELAY = 86400
 
-class AIGovernorBot(CommandHandlers, CallbackHandlers, MessageHandlers):
-    """AI Governor Bot - Telegram event orchestration."""
 
-    def __init__(self):
-        self.settings = get_settings()
-        self.application: Optional[Application] = None
-        self._handlers_registered = False
-        self._promotion_tasks = []
-        self._button_clicks: dict[int, deque[float]] = defaultdict(deque)
+class ModerationBot:
+    def __init__(self) -> None:
+        self.config = get_settings()
+        self.application = Application.builder().token(self.config.BOT_TOKEN).build()
 
-    async def initialize(self):
-        """Initialize telegram application and register all handlers before start."""
-        if self.application is not None:
-            return
-
-        self.application = Application.builder().token(self.settings.BOT_TOKEN).build()
-        self._register_handlers()
-        self._promotion_tasks.append(asyncio.create_task(self._group_promotion_loop()))
-        self._promotion_tasks.append(asyncio.create_task(self._dm_promotion_loop()))
-
-    def _register_handlers(self):
-        """Register all bot handlers exactly once."""
-        if self._handlers_registered:
-            return
-
-        app = self.application
-        app.add_handler(CommandHandler("start", self.cmd_start))
-        app.add_handler(CommandHandler("panel", self.cmd_panel))
-        app.add_handler(CommandHandler("pannel", self.cmd_panel))
-        app.add_handler(CommandHandler("setdelay", self.cmd_setdelay))
-
-        app.add_handler(CallbackQueryHandler(self.handle_callback))
-        app.add_handler(CallbackQueryHandler(verify_join_callback, pattern=r"^verify_join$"))
-
-        app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, self.handle_message))
-        app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, self.handle_edited_message))
-
-        app.add_error_handler(self.handle_error)
-        self._handlers_registered = True
-
-    # Helper methods
-    async def _is_admin(self, chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    async def _is_admin(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
         try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            return member.status in {"administrator", "creator"}
-        except TelegramError:
+            member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+            return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER}
+        except TelegramError as exc:
+            logger.error("Admin check failed chat=%s user=%s error=%s", chat_id, user_id, exc)
             return False
 
-    async def _get_group(self, group_id: int) -> Optional[Group]:
-        async with db_manager.get_session() as session:
-            result = await session.execute(select(Group).where(Group.id == group_id))
-            return result.scalar_one_or_none()
+    def _status_text(self) -> str:
+        return (
+            "Moderation Status\n\n"
+            "Text moderation: ON\n"
+            "Image moderation: ON\n"
+            f"Edit message delete: ON ({DEFAULT_EDIT_DELETE_DELAY}s)\n"
+            f"Auto delete: ON ({DEFAULT_AUTO_DELETE_DELAY}s)\n\n"
+            "To change delay use:\n"
+            "/setdelay"
+        )
 
-    async def _get_group_language(self, group_id: int) -> str:
-        group = await self._get_group(group_id)
-        return group.language if group else "en"
+    async def _safe_delete_message(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int) -> None:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except RetryAfter as exc:
+            logger.warning("Delete rate-limited chat=%s message=%s retry_after=%s", chat_id, message_id, exc.retry_after)
+        except (BadRequest, Forbidden, TelegramError):
+            pass
+        except Exception as exc:
+            logger.error("Unexpected delete error chat=%s message=%s error=%s", chat_id, message_id, exc)
 
-    async def _create_group(self, chat):
-        async with db_manager.get_session() as session:
-            existing = (await session.execute(select(Group).where(Group.id == chat.id))).scalar_one_or_none()
-            if existing:
+    async def _delete_after_delay(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        message_id: int,
+        delay_seconds: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(max(1, delay_seconds))
+            await self._safe_delete_message(context=context, chat_id=chat_id, message_id=message_id)
+        except Exception as exc:
+            logger.error("Delayed delete task failed chat=%s message=%s error=%s", chat_id, message_id, exc)
+
+    def _schedule_delete(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        message_id: int,
+        delay_seconds: int,
+    ) -> None:
+        asyncio.create_task(self._delete_after_delay(context, chat_id, message_id, delay_seconds))
+
+    async def _auto_delete_if_needed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        chat = update.effective_chat
+        if not message or not chat or chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            return
+        delay = int(context.chat_data.get("auto_delete_delay", DEFAULT_AUTO_DELETE_DELAY))
+        self._schedule_delete(context=context, chat_id=chat.id, message_id=message.message_id, delay_seconds=delay)
+
+    async def _delete_unsafe_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        chat = update.effective_chat
+        if not message or not chat:
+            return
+        await self._safe_delete_message(context=context, chat_id=chat.id, message_id=message.message_id)
+
+    async def _should_skip_for_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        chat = update.effective_chat
+        user = update.effective_user
+        if not chat or not user or chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            return True
+        awaiting_user = context.chat_data.get("awaiting_delay_user")
+        return awaiting_user == user.id
+
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            chat = update.effective_chat
+            user = update.effective_user
+            if not chat or not user:
                 return
 
-            group_type = GroupType.SUPERGROUP if chat.type == "supergroup" else GroupType.PUBLIC
-            session.add(
-                Group(
-                    id=chat.id,
-                    title=chat.title or "Unknown",
-                    username=chat.username,
-                    group_type=group_type,
+            if chat.type == ChatType.PRIVATE:
+                me = await context.bot.get_me()
+                keyboard = InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("Add to Group", url=f"https://t.me/{me.username}?startgroup=true")],
+                        [InlineKeyboardButton("Support", url=self.config.SUPPORT_CHANNEL_LINK)],
+                        [InlineKeyboardButton("Commands & Controls", callback_data="panel")],
+                    ]
                 )
-            )
-            await session.commit()
+                text = "Moderation Bot\n\nAI powered protection for Telegram groups.\n\nUse the buttons below."
+                await update.effective_message.reply_text(text=text, reply_markup=keyboard)
+                return
 
-    async def _ensure_user_exists(self, telegram_user) -> None:
-        async with db_manager.get_session() as session:
-            await session.execute(
-                insert(User)
-                .values(
-                    id=telegram_user.id,
-                    username=telegram_user.username,
-                    first_name=telegram_user.first_name,
-                    last_name=telegram_user.last_name,
-                    language_code=telegram_user.language_code or "en",
-                    is_bot=telegram_user.is_bot,
-                )
-                .on_conflict_do_nothing(index_elements=[User.id])
-            )
-            await session.commit()
-
-    async def _log_message(self, message, risk_assessment, group_id, telegram_user):
-        async with db_manager.get_session() as session:
-            async with session.begin():
-                await self._ensure_user_exists(telegram_user)
-                session.add(
-                    Message(
-                        message_id=message.message_id,
-                        group_id=group_id,
-                        user_id=telegram_user.id,
-                        text=message.text,
-                        risk_score=risk_assessment.final_score,
-                        risk_level=RiskLevel.coerce(risk_assessment.risk_level),
-                        action_taken=risk_assessment.action,
-                    )
-                )
-
-    async def _handle_violation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, risk_assessment):
-        chat = update.effective_chat
-        user = update.effective_user
-        message = update.effective_message
-
-        if not chat or not user or not message:
-            return
-
-        violation_text = (
-            f"⚠️ <b>Content Violation Detected</b>\n\n"
-            f"User: {user.mention_html()}\n"
-            f"Risk Score: {risk_assessment.final_score}/100\n"
-            f"Action: {risk_assessment.action}"
-        )
-
-        if risk_assessment.reason:
-            violation_text += f"\nReason: {risk_assessment.reason}"
-
-        await context.bot.send_message(
-            chat_id=chat.id,
-            text=violation_text,
-            parse_mode="HTML",
-        )
-
-        db_risk_level = RiskLevel.coerce(risk_assessment.risk_level)
-
-        trust_update = await trust_engine.calculate_trust_update(
-            user.id,
-            chat.id,
-            "violation",
-            severity=db_risk_level.normalized,
-        )
-
-        async with db_manager.get_session() as session:
-            await trust_engine.update_user_trust(user.id, chat.id, trust_update.new_score, session)
-
-    async def _handle_warning(self, update: Update, context: ContextTypes.DEFAULT_TYPE, risk_assessment):
-        chat = update.effective_chat
-        user = update.effective_user
-        message = update.effective_message
-
-        if not chat or not user or not message:
-            return
-
-        warning_text = f"⚠️ {user.mention_html()}, your message may violate group rules."
-
-        warn_msg = await context.bot.send_message(
-            chat_id=chat.id,
-            text=warning_text,
-            parse_mode="HTML",
-            reply_to_message_id=message.message_id,
-        )
-
-        db_risk_level = RiskLevel.coerce(risk_assessment.risk_level)
-
-        trust_update = await trust_engine.calculate_trust_update(
-            user.id,
-            chat.id,
-            "violation",
-            severity=db_risk_level.normalized,
-        )
-
-        async with db_manager.get_session() as session:
-            await trust_engine.update_user_trust(user.id, chat.id, trust_update.new_score, session)
-
-    async def _send_welcome_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat = update.effective_chat
-        if not chat:
-            return
-
-        text = (
-            f"{self.settings.BOT_NAME} Activated\n\n"
-            "Protection System Activated:\n"
-            "✓ Spam Shield\n"
-            "✓ AI Abuse Detection\n"
-            "✓ Link Intelligence\n"
-            "✓ Anti-Raid System\n"
-            "✓ Trust Score Engine\n"
-            "✓ Media Scanner\n\n"
-            "Use /panel to customize settings."
-        )
-
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Open Control Panel", callback_data=f"cp:main:{chat.id}")]]
-        )
-
-        await context.bot.send_message(chat_id=chat.id, text=text, reply_markup=keyboard)
-
-    def _parse_callback_payload(self, data: str, prefix: str) -> Optional[Tuple[str, int]]:
-        """Parse callback data like 'cp_toggle:strict_mode:12345'."""
-        if not data.startswith(f"{prefix}:"):
-            return None
-        parts = data.split(":")
-        if len(parts) != 3:
-            return None
-        try:
-            return parts[1], int(parts[2])
-        except ValueError:
-            return None
-
-    async def _rate_limited(self, user_id: int) -> bool:
-        """Check if user is rate limited."""
-        now = time.time()
-        user_clicks = self._button_clicks[user_id]
-        while user_clicks and user_clicks[0] < now - self.settings.BUTTON_CLICK_RATE_LIMIT_WINDOW_SECONDS:
-            user_clicks.popleft()
-        if len(user_clicks) >= self.settings.BUTTON_CLICK_RATE_LIMIT_MAX:
-            return True
-        user_clicks.append(now)
-        return False
-
-    async def _handle_raid_detection(self, update, context, raid_result):
-        chat = update.effective_chat
-        if not chat:
-            return
-
-        await context.bot.send_message(
-            chat_id=chat.id,
-            text=(
-                "🚨 RAID DETECTED 🚨\n\n"
-                f"Type: {raid_result.raid_type}\n"
-                f"Confidence: {raid_result.confidence:.0%}\n\n"
-                "Protection activated."
-            ),
-        )
-
-    async def _group_promotion_loop(self):
-        while True:
-            await asyncio.sleep(max(1, self.settings.GROUP_PROMOTION_INTERVAL) * 3600)
-            await self._send_group_promotion()
-
-    async def _dm_promotion_loop(self):
-        while True:
-            await asyncio.sleep(max(1, self.settings.DM_PROMOTION_INTERVAL) * 3600)
-            await self._send_dm_promotion()
-
-    async def _send_group_promotion(self):
-        if not self.application:
-            return
-        try:
-            groups = await get_all_groups()
-            promo_text = """◆ 🤖 ʀᴀᴋsʜᴀᴋ ᴀɪ ɢᴜᴀʀᴅɪᴀɴ 💗
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-ᴋᴇᴇᴘɪɴɢ ʏᴏᴜʀ ɢʀᴏᴜᴘ sᴀғᴇ ᴀɴᴅ ᴄʟᴇᴀɴ
-
-⚘ ғᴇᴀᴛᴜʀᴇs :-
-
-● ᴀɪ ᴄᴏɴᴛᴇɴᴛ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ
-● sᴛɪᴄᴋᴇʀ & ɢɪғ ᴀɴᴀʟʏsɪs
-● ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ sʏsᴛᴇᴍ
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ •"""
-            keyboard = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("• ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ •", url=f"https://t.me/{self.application.bot.username}?startgroup=true")]]
-            )
-            for group_id in groups:
-                try:
-                    msg = await self.application.bot.send_message(chat_id=group_id, text=promo_text, reply_markup=keyboard)
-                    asyncio.create_task(auto_delete_message(msg, 3600))
-                except Exception:
-                    continue
+            if chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+                if not await self._is_admin(context=context, chat_id=chat.id, user_id=user.id):
+                    await update.effective_message.reply_text("You must be an admin to use this command.")
+                    return
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="back")]])
+                await update.effective_message.reply_text(self._status_text(), reply_markup=keyboard)
         except Exception as exc:
-            logger.error("Group promotion error: %s", exc)
+            logger.error("start_command failed: %s", exc)
 
-    async def _send_dm_promotion(self):
-        if not self.application:
-            return
+    async def panel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            users = await get_all_users()
-            promo_text = """◆ ʜᴇʏ ᴛʜᴇʀᴇ 👋 💗
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-ᴍɪss ᴍᴇ ? ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ
-ᴀɴᴅ ᴋᴇᴇᴘ ɪᴛ sᴀғᴇ ғʀᴏᴍ sᴘᴀᴍ & ᴛᴏxɪᴄɪᴛʏ
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• ᴀᴅᴅ ᴍᴇ ɴᴏᴡ •"""
-            keyboard = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("• ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ •", url=f"https://t.me/{self.application.bot.username}?startgroup=true")]]
-            )
-            for user_id in users:
-                try:
-                    await self.application.bot.send_message(chat_id=user_id, text=promo_text, reply_markup=keyboard)
-                except Exception:
-                    continue
+            chat = update.effective_chat
+            user = update.effective_user
+            message = update.effective_message
+            if not chat or not user or not message:
+                return
+            if chat.type in {ChatType.GROUP, ChatType.SUPERGROUP} and not await self._is_admin(context, chat.id, user.id):
+                await message.reply_text("You must be an admin to use this command.")
+                return
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="back")]])
+            await message.reply_text(self._status_text(), reply_markup=keyboard)
         except Exception as exc:
-            logger.error("DM promotion error: %s", exc)
+            logger.error("panel_command failed: %s", exc)
 
-    async def _get_total_groups(self) -> int:
-        return len(await get_all_groups())
+    async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            query = update.callback_query
+            if not query:
+                return
+            await query.answer()
 
-    async def _get_total_violations(self) -> int:
-        async with db_manager.get_session() as session:
-            rows = await session.execute(select(GroupUser.violation_count))
-            return int(sum(row[0] or 0 for row in rows.all()))
+            chat = query.message.chat if query.message else None
+            user = query.from_user
+            if not chat or not user:
+                return
+
+            data = query.data or ""
+            if data not in {"panel", "back"}:
+                return
+
+            if chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+                if not await self._is_admin(context=context, chat_id=chat.id, user_id=user.id):
+                    return
+
+            if data == "panel":
+                text = self._status_text()
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="back")]])
+            elif chat.type == ChatType.PRIVATE:
+                me = await context.bot.get_me()
+                text = "Moderation Bot\n\nAI powered protection for Telegram groups.\n\nUse the buttons below."
+                keyboard = InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("Add to Group", url=f"https://t.me/{me.username}?startgroup=true")],
+                        [InlineKeyboardButton("Support", url=self.config.SUPPORT_CHANNEL_LINK)],
+                        [InlineKeyboardButton("Commands & Controls", callback_data="panel")],
+                    ]
+                )
+            else:
+                text = self._status_text()
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="back")]])
+
+            try:
+                await query.edit_message_text(text=text, reply_markup=keyboard)
+            except BadRequest as exc:
+                if "Message is not modified" in str(exc):
+                    return
+                if "message to edit not found" in str(exc).lower():
+                    return
+                logger.error("Callback edit failed: %s", exc)
+            except TelegramError as exc:
+                logger.error("Callback edit telegram error: %s", exc)
+        except Exception as exc:
+            logger.error("on_callback failed: %s", exc)
+
+    async def setdelay_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            chat = update.effective_chat
+            user = update.effective_user
+            message = update.effective_message
+            if not chat or not user or not message:
+                return ConversationHandler.END
+            if chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+                await message.reply_text("You must be an admin to use this command.")
+                return ConversationHandler.END
+            if not await self._is_admin(context=context, chat_id=chat.id, user_id=user.id):
+                await message.reply_text("You must be an admin to use this command.")
+                return ConversationHandler.END
+            context.chat_data["awaiting_delay_user"] = user.id
+            await message.reply_text("Send new delay in seconds.\nRange: 1 - 86400")
+            return SET_DELAY_VALUE
+        except Exception as exc:
+            logger.error("setdelay_start failed: %s", exc)
+            return ConversationHandler.END
+
+    async def setdelay_receive(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            chat = update.effective_chat
+            user = update.effective_user
+            message = update.effective_message
+            if not chat or not user or not message:
+                context.chat_data.pop("awaiting_delay_user", None)
+                return ConversationHandler.END
+
+            awaiting_user = context.chat_data.get("awaiting_delay_user")
+            if awaiting_user != user.id:
+                return SET_DELAY_VALUE
+
+            raw = (message.text or "").strip()
+            if not raw.isdigit():
+                await message.reply_text("Invalid value. Send number between 1 and 86400.")
+                return SET_DELAY_VALUE
+
+            value = int(raw)
+            if value < MIN_DELAY or value > MAX_DELAY:
+                await message.reply_text("Invalid value. Send number between 1 and 86400.")
+                return SET_DELAY_VALUE
+
+            context.chat_data["auto_delete_delay"] = value
+            context.chat_data.pop("awaiting_delay_user", None)
+            await message.reply_text(f"Delay updated to {value} seconds.")
+            return ConversationHandler.END
+        except Exception as exc:
+            logger.error("setdelay_receive failed: %s", exc)
+            context.chat_data.pop("awaiting_delay_user", None)
+            return ConversationHandler.END
+
+    async def setdelay_timeout(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            context.chat_data.pop("awaiting_delay_user", None)
+            if update.effective_message:
+                await update.effective_message.reply_text("Delay update timed out. Run /setdelay again.")
+        except Exception as exc:
+            logger.error("setdelay_timeout failed: %s", exc)
+        return ConversationHandler.END
+
+    async def moderate_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if await self._should_skip_for_conversation(update, context):
+                return
+            message = update.effective_message
+            if not message or not message.text:
+                return
+            result = await ai_moderation_service.analyze_message(message.text)
+            if not result.get("is_safe", True):
+                await self._delete_unsafe_message(update, context)
+                return
+            await self._auto_delete_if_needed(update, context)
+        except Exception as exc:
+            logger.error("moderate_text failed: %s", exc)
+
+    async def moderate_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if await self._should_skip_for_conversation(update, context):
+                return
+            message = update.effective_message
+            if not message or not message.photo:
+                return
+            photo = message.photo[-1]
+            file = await photo.get_file()
+            image_bytes = await file.download_as_bytearray()
+            result = await moderation_service.analyze_image(bytes(image_bytes))
+            if not result.get("is_safe", True):
+                await self._delete_unsafe_message(update, context)
+                return
+            await self._auto_delete_if_needed(update, context)
+        except Exception as exc:
+            logger.error("moderate_photo failed: %s", exc)
+
+    async def moderate_sticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if await self._should_skip_for_conversation(update, context):
+                return
+            message = update.effective_message
+            sticker = message.sticker if message else None
+            if not message or not sticker:
+                return
+            file = await sticker.get_file()
+            sticker_bytes = await file.download_as_bytearray()
+            result = await moderation_service.analyze_sticker(
+                bytes(sticker_bytes),
+                is_animated=bool(sticker.is_animated or sticker.is_video),
+                set_name=sticker.set_name,
+            )
+            if not result.get("is_safe", True):
+                await self._delete_unsafe_message(update, context)
+                return
+            await self._auto_delete_if_needed(update, context)
+        except Exception as exc:
+            logger.error("moderate_sticker failed: %s", exc)
+
+    async def moderate_animation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if await self._should_skip_for_conversation(update, context):
+                return
+            message = update.effective_message
+            animation = message.animation if message else None
+            if not message or not animation:
+                return
+            file = await animation.get_file()
+            anim_bytes = await file.download_as_bytearray()
+            result = await moderation_service.analyze_animation(
+                bytes(anim_bytes),
+                mime_type=animation.mime_type or "image/gif",
+                file_name=animation.file_name,
+            )
+            if not result.get("is_safe", True):
+                await self._delete_unsafe_message(update, context)
+                return
+            await self._auto_delete_if_needed(update, context)
+        except Exception as exc:
+            logger.error("moderate_animation failed: %s", exc)
+
+    async def handle_edited_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            message = update.edited_message
+            chat = update.effective_chat
+            if not message or not chat or chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+                return
+            self._schedule_delete(
+                context=context,
+                chat_id=chat.id,
+                message_id=message.message_id,
+                delay_seconds=DEFAULT_EDIT_DELETE_DELAY,
+            )
+        except Exception as exc:
+            logger.error("handle_edited_message failed: %s", exc)
+
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            logger.error("Unhandled error: %s", context.error)
+        except Exception:
+            logger.error("Unhandled error logging failure")
+
+    def register_handlers(self) -> None:
+        setdelay_handler = ConversationHandler(
+            entry_points=[CommandHandler("setdelay", self.setdelay_start)],
+            states={
+                SET_DELAY_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.setdelay_receive)],
+                ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, self.setdelay_timeout)],
+            },
+            fallbacks=[],
+            conversation_timeout=120,
+            per_chat=True,
+            per_user=True,
+            per_message=False,
+        )
+
+        self.application.add_handler(CommandHandler("start", self.start_command), group=0)
+        self.application.add_handler(CommandHandler("panel", self.panel_command), group=0)
+        self.application.add_handler(setdelay_handler, group=0)
+        self.application.add_handler(CallbackQueryHandler(self.on_callback), group=0)
+
+        group_filter = filters.ChatType.GROUPS
+        self.application.add_handler(
+            MessageHandler(group_filter & filters.TEXT & ~filters.COMMAND, self.moderate_text),
+            group=1,
+        )
+        self.application.add_handler(MessageHandler(group_filter & filters.PHOTO, self.moderate_photo), group=1)
+        self.application.add_handler(MessageHandler(group_filter & filters.Sticker.ALL, self.moderate_sticker), group=1)
+        self.application.add_handler(MessageHandler(group_filter & filters.ANIMATION, self.moderate_animation), group=1)
+        self.application.add_handler(
+            MessageHandler(group_filter & filters.UpdateType.EDITED_MESSAGE, self.handle_edited_message),
+            group=1,
+        )
+
+        self.application.add_error_handler(self.error_handler)
+
+    def run(self) -> None:
+        self.register_handlers()
+        self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
-governor_bot = AIGovernorBot()
-
-
-async def run_bot() -> None:
-    """Run the bot with database initialization and graceful shutdown."""
-    await db_manager.initialize()
-    await db_manager.create_tables()
-
-    await governor_bot.initialize()
-    app = governor_bot.application
-    if app is None:
-        raise RuntimeError("Telegram application failed to initialize")
-
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-
-    try:
-        await asyncio.Event().wait()
-    finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-        await db_manager.close()
+def run_bot() -> None:
+    bot = ModerationBot()
+    bot.run()
 
 
 if __name__ == "__main__":
-    asyncio.run(run_bot())
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    run_bot()
