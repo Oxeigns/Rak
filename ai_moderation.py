@@ -126,15 +126,21 @@ class AIModerationService:
 
     def _normalize_result(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         """Ensures all keys are present and scores are between 0 and 1."""
+
+        def _safe_score(value: Any) -> float:
+            try:
+                score = float(value)
+            except (TypeError, ValueError):
+                score = 0.0
+            return max(0.0, min(1.0, score))
+
         normalized = {
             "is_safe": self._to_bool(raw.get("is_safe"), default=True),
-            "spam_score": float(raw.get("spam_score", 0.0)),
-            "toxicity_score": float(raw.get("toxicity_score", 0.0)),
-            "illegal_score": float(raw.get("illegal_score", 0.0)),
+            "spam_score": _safe_score(raw.get("spam_score", 0.0)),
+            "toxicity_score": _safe_score(raw.get("toxicity_score", 0.0)),
+            "illegal_score": _safe_score(raw.get("illegal_score", 0.0)),
             "reason": str(raw.get("reason", "No reason")),
         }
-        for key in ("spam_score", "toxicity_score", "illegal_score"):
-            normalized[key] = max(0.0, min(1.0, normalized[key]))
         return normalized
 
     def _fallback_analysis(self, text: str) -> Dict[str, Any]:
