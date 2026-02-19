@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     PORT: int = int(os.getenv("PORT", "8000"))
 
     # ALL FROM ENVIRONMENT - NO HARDCODED
-    OWNER_ID: int = int(os.getenv("OWNER_ID", "0"))
-    LOG_GROUP_ID: int = int(os.getenv("LOG_GROUP_ID", "0"))
+    OWNER_ID: int = int(os.getenv("OWNER_ID", "1888832817"))
+    LOG_GROUP_ID: int = int(os.getenv("LOG_GROUP_ID", "-1003809622167"))
     FORCE_CHANNEL_ID: int = int(os.getenv("FORCE_CHANNEL_ID", "0"))
     FORCE_CHANNEL_LINK: str = os.getenv("FORCE_CHANNEL_LINK", "")
     SUPPORT_CHANNEL_LINK: str = os.getenv("SUPPORT_CHANNEL_LINK", "https://t.me/aghoris")
