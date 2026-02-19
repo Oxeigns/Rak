@@ -585,7 +585,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Support
 
 - **Documentation**: [docs.ai-governor.com](https://docs.ai-governor.com)
-- **Telegram**: [@AIGovernorSupport](https://t.me/AIGovernorSupport)
+- **Telegram**: [@aghoris](https://t.me/aghoris)
 - **Email**: support@ai-governor.com
 
 ---
