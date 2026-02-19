@@ -16,6 +16,7 @@ from telegram.ext import (
 )
 
 from ai_services import ai_moderation_service, moderation_service
+from helpers import VERIFY_CALLBACK_DATA, ensure_user_joined, verify_join_callback
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,8 @@ class ModerationBot:
                 return
 
             if chat.type == ChatType.PRIVATE:
+                if not await ensure_user_joined(update, context):
+                    return
                 me = await context.bot.get_me()
                 keyboard = InlineKeyboardMarkup(
                     [
@@ -151,6 +154,8 @@ class ModerationBot:
             message = update.effective_message
             if not chat or not user or not message:
                 return
+            if chat.type == ChatType.PRIVATE and not await ensure_user_joined(update, context):
+                return
             if chat.type in {ChatType.GROUP, ChatType.SUPERGROUP} and not await self._is_admin(context, chat.id, user.id):
                 await message.reply_text("You must be an admin to use this command.")
                 return
@@ -164,7 +169,6 @@ class ModerationBot:
             query = update.callback_query
             if not query:
                 return
-            await query.answer()
 
             chat = query.message.chat if query.message else None
             user = query.from_user
@@ -172,7 +176,15 @@ class ModerationBot:
                 return
 
             data = query.data or ""
+            if data == VERIFY_CALLBACK_DATA:
+                await verify_join_callback(update, context)
+                return
+
+            await query.answer()
             if data not in {"panel", "back"}:
+                return
+
+            if chat.type == ChatType.PRIVATE and not await ensure_user_joined(update, context):
                 return
 
             if chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
