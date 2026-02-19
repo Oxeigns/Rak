@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from bot import run_bot
@@ -14,4 +13,4 @@ logging.basicConfig(
 
 
 if __name__ == "__main__":
-    asyncio.run(run_bot())
+    run_bot()
