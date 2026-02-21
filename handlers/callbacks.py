@@ -52,7 +52,7 @@ sᴇʟᴇᴄᴛ ᴀ ғᴇᴀᴛᴜʀᴇ ᴛᴏ ᴠɪᴇᴡ:
             await query.edit_message_text(
                 self._card(
                     "ᴛᴇxᴛ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ 📝",
-                    "Deletes toxic, illegal, spammy or unsafe text content using AI moderation.",
+                    "Deletes toxic, illegal, spammy or unsafe text from users and other bots using AI moderation.",
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔙 ʙᴀᴄᴋ", callback_data="btn_back")],
@@ -64,7 +64,7 @@ sᴇʟᴇᴄᴛ ᴀ ғᴇᴀᴛᴜʀᴇ ᴛᴏ ᴠɪᴇᴡ:
             await query.edit_message_text(
                 self._card(
                     "ɪᴍᴀɢᴇ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ 🖼️",
-                    "Scans image uploads and removes NSFW/unsafe media with optional delay clean-up.",
+                    "Scans all image uploads (including bot posts) and removes NSFW/unsafe media with optional delay clean-up.",
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔙 ʙᴀᴄᴋ", callback_data="btn_back")],
