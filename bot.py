@@ -113,6 +113,7 @@ class ModerationBot:
     def _status_text(self) -> str:
         return (
             "Moderation Status\n\n"
+            "Bot message moderation: ON\n"
             "Text moderation: ON\n"
             "Image moderation: ON\n"
             f"Edit message delete: ON ({DEFAULT_EDIT_DELETE_DELAY}s)\n"
@@ -312,7 +313,13 @@ class ModerationBot:
                         [InlineKeyboardButton("Commands & Controls", callback_data="panel")],
                     ]
                 )
-                text = "Moderation Bot\n\nAI powered protection for Telegram groups.\n\nUse the buttons below."
+                text = (
+                    "Moderation Bot\n\n"
+                    "AI powered protection for Telegram groups.\n"
+                    "Processes messages from users and other bots.\n"
+                    "Automated moderation applies to text and images.\n\n"
+                    "Use the buttons below."
+                )
                 await update.effective_message.reply_text(text=text, reply_markup=keyboard)
                 return
 
@@ -433,7 +440,13 @@ class ModerationBot:
                 keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="back")]])
             elif chat.type == ChatType.PRIVATE:
                 me = await context.bot.get_me()
-                text = "Moderation Bot\n\nAI powered protection for Telegram groups.\n\nUse the buttons below."
+                text = (
+                    "Moderation Bot\n\n"
+                    "AI powered protection for Telegram groups.\n"
+                    "Processes messages from users and other bots.\n"
+                    "Automated moderation applies to text and images.\n\n"
+                    "Use the buttons below."
+                )
                 keyboard = InlineKeyboardMarkup(
                     [
                         [InlineKeyboardButton("Add to Group", url=f"https://t.me/{me.username}?startgroup=true")],
@@ -546,6 +559,12 @@ class ModerationBot:
             message = update.effective_message
             if not message or not message.photo:
                 return
+            caption = (message.caption or "").strip()
+            if caption:
+                text_result = await ai_moderation_service.analyze_message(caption)
+                if not text_result.get("is_safe", True):
+                    await self._delete_unsafe_message(update, context)
+                    return
             photo = message.photo[-1]
             file = await photo.get_file()
             image_bytes = await file.download_as_bytearray()
