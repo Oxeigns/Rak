@@ -8,6 +8,10 @@ from typing import List, Dict, Any
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -166,6 +170,22 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 
+
+
+DEFAULT_MODERATION_SETTINGS: Dict[str, Any] = {
+    "text_filter": True,
+    "image_filter": True,
+    "sticker_filter": True,
+    "gif_filter": True,
+    "link_filter": True,
+    "ai_moderation_enabled": True,
+    "bot_moderation": True,
+}
+
+LOCALIZED_TEXT: Dict[str, Dict[str, str]] = {
+    "en": {"verification_success": "Verification successful", "content_removed": "Content removed"},
+    "hi": {"verification_success": "सत्यापन सफल", "content_removed": "सामग्री हटाई गई"},
+}
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""

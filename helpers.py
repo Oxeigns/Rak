@@ -1,23 +1,33 @@
+"""Shared helper utilities for join-gating, styling, and group settings."""
+
+from __future__ import annotations
+
+import asyncio
 import logging
 from functools import wraps
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
-from settings import get_settings
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from sqlalchemy import select
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ChatMemberStatus, ChatType
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import ContextTypes
 
-logger = logging.getLogger(__name__)
+from database import Group, GroupSettings, db_manager
+from settings import get_settings
+from styled_helpers import (
+    font_times,
+    styled_alert,
+    styled_info,
+    styled_panel_title,
+    styled_success,
+)
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 FORCE_JOIN_CHANNEL_ID = settings.FORCE_JOIN_CHANNEL_ID
 FORCE_JOIN_CHANNEL_LINK = settings.FORCE_JOIN_CHANNEL_LINK
-FORCE_JOIN_DENIED_MESSAGE = (
-    "⚠️ <b>Access Denied!</b>\n\nBhai, Rakshak Bot ko use karne ke liye aapko hamare official channel ko join karna hoga. Join karne ke baad niche 'Done' button pe click karein."
-)
 VERIFY_CALLBACK_DATA = "verify_join"
 
 _ALLOWED_STATUSES = {
@@ -28,236 +38,210 @@ _ALLOWED_STATUSES = {
 
 HandlerFunc = TypeVar("HandlerFunc", bound=Callable[..., Awaitable[None]])
 
+DEFAULT_GROUP_SETTINGS: dict[str, Any] = {
+    "language": "en",
+    "strict_mode": False,
+    "text_filter": True,
+    "image_filter": True,
+    "sticker_filter": True,
+    "gif_filter": True,
+    "link_filter": True,
+    "ai_moderation_enabled": True,
+    "bot_moderation": True,
+    "auto_delete": True,
+    "auto_delete_time": settings.AUTO_DELETE_BOT_MSG,
+    "auto_delete_violation": settings.AUTO_DELETE_VIOLATION,
+    "auto_delete_edited": settings.AUTO_DELETE_EDITED,
+    "toxic_threshold": 0.7,
+    "mute_duration": 24,
+    "max_warnings": 3,
+}
+
+
+def _localized_force_join_text(language: str) -> str:
+    if language == "hi":
+        return styled_alert(
+            "Access Denied",
+            "Rak bot इस्तेमाल करने से पहले official channel join करें।\nJoin के बाद Verify दबाएं।",
+        )
+    return styled_alert(
+        "Access Denied",
+        "Join the official channel to continue using Rak.\nAfter joining, tap Verify.",
+    )
+
+
+def styled_panel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(font_times("🧠 Moderation"), callback_data="panel_moderation")],
+            [InlineKeyboardButton(font_times("🛡️ Security"), callback_data="panel_security")],
+            [InlineKeyboardButton(font_times("⚙️ Settings"), callback_data="panel_settings")],
+        ]
+    )
+
+
+def moderation_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(font_times("🔇 Mute"), callback_data=f"mute_{user_id}")],
+            [InlineKeyboardButton(font_times("⛔ Ban"), callback_data=f"ban_{user_id}")],
+            [InlineKeyboardButton(font_times("⚠️ Warn"), callback_data=f"warn_{user_id}")],
+            [InlineKeyboardButton(font_times("🔓 Unmute"), callback_data=f"unmute_{user_id}")],
+        ]
+    )
+
+
 def _force_join_keyboard() -> InlineKeyboardMarkup:
     rows = []
     if FORCE_JOIN_CHANNEL_LINK:
-        rows.append([InlineKeyboardButton("📢 Join Official Channel", url=FORCE_JOIN_CHANNEL_LINK)])
-    rows.append([InlineKeyboardButton("✅ Done / Verify", callback_data=VERIFY_CALLBACK_DATA)])
+        rows.append([InlineKeyboardButton(font_times("📢 Join Official Channel"), url=FORCE_JOIN_CHANNEL_LINK)])
+    rows.append([InlineKeyboardButton(font_times("✅ Done / Verify"), callback_data=VERIFY_CALLBACK_DATA)])
     return InlineKeyboardMarkup(rows)
+
 
 async def _is_joined(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user = update.effective_user
     if not user:
         return False
-
-    # Skip check if not configured
     if not FORCE_JOIN_CHANNEL_ID or FORCE_JOIN_CHANNEL_ID == 0:
         return True
-
     try:
         member = await context.bot.get_chat_member(FORCE_JOIN_CHANNEL_ID, user.id)
         return member.status in _ALLOWED_STATUSES
     except (Forbidden, BadRequest) as exc:
-        # User has never started the bot or bot is not admin in the channel
-        logger.warning(f"Force-join check failed for {user.id}: {exc}")
+        logger.warning("Force-join membership check failed for user %s: %s", user.id, exc)
         return False
-    except Exception as e:
-        logger.error(f"Unexpected error in force-join check: {e}")
+    except TelegramError as exc:
+        logger.error("Telegram error during force-join check: %s", exc)
         return False
 
+
 async def send_force_join_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends the force join message with keyboard."""
+    """Send force-join prompt with styled Times New Roman card."""
+    language = "en"
+    if update.effective_chat and update.effective_chat.type != ChatType.PRIVATE:
+        group_settings = await get_group_settings(update.effective_chat.id)
+        language = group_settings.get("language", "en")
+
     params = {
-        "text": FORCE_JOIN_DENIED_MESSAGE,
+        "text": _localized_force_join_text(language),
         "reply_markup": _force_join_keyboard(),
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
     }
-    
-    if update.callback_query:
+    if update.callback_query and update.callback_query.message:
         await update.callback_query.message.reply_text(**params)
     elif update.message:
         await update.message.reply_text(**params)
 
+
 async def ensure_user_joined(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Global helper to check membership."""
     if await _is_joined(update, context):
         return True
-
     await send_force_join_prompt(update, context)
     return False
 
+
 def is_user_joined(func: HandlerFunc) -> HandlerFunc:
-    """Decorator for private chats and commands.
-
-    Supports both free handlers (update, context) and bound class methods
-    (self, update, context).
-    """
-
     @wraps(func)
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         if len(args) < 2:
             return await func(*args, **kwargs)
 
-        if isinstance(args[0], Update):
-            update = args[0]
-            context = args[1]
-            call_args = args
-        else:
-            if len(args) < 3:
-                return await func(*args, **kwargs)
-            update = args[1]
-            context = args[2]
-            call_args = args
+        update = args[0] if isinstance(args[0], Update) else args[1]
+        context = args[1] if isinstance(args[0], Update) else args[2]
 
         if not isinstance(update, Update):
             return await func(*args, **kwargs)
 
-        if not update.effective_chat or not update.effective_user:
-            return await func(*call_args, **kwargs)
+        if not update.effective_chat:
+            return await func(*args, **kwargs)
 
-        # Force join logic only for Private chats OR Commands in groups
         is_private = update.effective_chat.type == ChatType.PRIVATE
         is_command = bool(update.message and update.message.text and update.message.text.startswith("/"))
-
-        if is_private or is_command:
-            if await _is_joined(update, context):
-                return await func(*call_args, **kwargs)
-            
+        if (is_private or is_command) and not await _is_joined(update, context):
             await send_force_join_prompt(update, context)
             return None
-            
-        return await func(*call_args, **kwargs)
+        return await func(*args, **kwargs)
 
     return wrapper
 
+
 async def verify_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles the 'Done / Verify' button click."""
     query = update.callback_query
     if not query:
         return
-
     if await _is_joined(update, context):
-        # FIX: Success alert and delete the prompt message to clean chat
-        await query.answer("✅ Verification successful! Ab aap bot use kar sakte ho.", show_alert=True)
-        try:
-            await query.message.delete()
-        except:
-            pass
+        await query.answer(font_times("Verification successful."), show_alert=True)
+        if query.message:
+            try:
+                await query.message.edit_text(
+                    text=styled_success("Verification Successful", "You now have access to Rak controls."),
+                    parse_mode="HTML",
+                )
+            except TelegramError:
+                logger.debug("Could not edit verification prompt message", exc_info=True)
     else:
-        # FIX: Show alert instead of sending more messages
-        await query.answer("❌ Abhi join detect nahi hua. Pehle channel join karo aur phir 'Done' dabao.", show_alert=True)
+        await query.answer(font_times("Join channel first, then verify."), show_alert=True)
 
 
-import asyncio
-from datetime import datetime
-
-
-async def auto_delete_message(message, delay_seconds: int):
+async def auto_delete_message(message: Message | None, delay_seconds: int) -> None:
     if not message or delay_seconds <= 0:
         return
     await asyncio.sleep(delay_seconds)
     try:
         await message.delete()
-    except Exception:
-        pass
+    except TelegramError:
+        logger.debug("Auto-delete failed", exc_info=True)
 
 
-async def get_group_settings(group_id: int) -> dict:
-    from database import Group, GroupSettings, db_manager
-    from sqlalchemy import select
-
-    default = {
-        "group_id": group_id,
-        "language": "en",
-        "text_filter": True,
-        "image_filter": True,
-        "sticker_filter": True,
-        "gif_filter": True,
-        "link_filter": True,
-        "auto_delete": True,
-        "auto_delete_time": settings.AUTO_DELETE_BOT_MSG,
-        "auto_delete_violation": settings.AUTO_DELETE_VIOLATION,
-        "auto_delete_edited": settings.AUTO_DELETE_EDITED,
-        "toxic_threshold": 0.7,
-        "mute_duration": 24,
-        "max_warnings": 3,
-    }
-
+async def get_group_settings(group_id: int) -> dict[str, Any]:
+    config = {"group_id": group_id, **DEFAULT_GROUP_SETTINGS}
     try:
         async with db_manager.get_session() as session:
             group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
-            gs = (await session.execute(select(GroupSettings).where(GroupSettings.group_id == group_id))).scalar_one_or_none()
+            group_settings = (
+                await session.execute(select(GroupSettings).where(GroupSettings.group_id == group_id))
+            ).scalar_one_or_none()
 
             if group:
-                default["language"] = group.language or "en"
-                default["strict_mode"] = bool(group.strict_mode)
-
-            if gs:
-                default["ai_moderation_enabled"] = bool(gs.ai_moderation_enabled)
-                # Load custom config if exists
-                if hasattr(gs, "config") and gs.config:
-                    default.update(gs.config)
-
-            return default
-    except Exception as e:
-        logger.error(f"Error getting group settings: {e}")
-        return default
+                config["language"] = group.language or "en"
+                config["strict_mode"] = bool(group.strict_mode)
+            if group_settings:
+                config["ai_moderation_enabled"] = bool(group_settings.ai_moderation_enabled)
+                if group_settings.config:
+                    config.update(group_settings.config)
+    except Exception:
+        logger.exception("Failed to fetch group settings for %s", group_id)
+    return config
 
 
-async def update_group_setting(group_id: int, setting: str, value):
-    """Update group setting with custom field support."""
-    from database import GroupSettings, db_manager
-    from sqlalchemy import select
-
-    # Custom settings that don't exist in GroupSettings model
-    custom_settings = {"auto_delete_time", "auto_delete_edited", "auto_delete_violation",
-                       "toxic_threshold", "mute_duration", "max_warnings", "text_filter",
-                       "image_filter", "sticker_filter", "gif_filter", "link_filter", "auto_delete"}
-
+async def update_group_setting(group_id: int, setting: str, value: Any) -> bool:
+    custom_settings = set(DEFAULT_GROUP_SETTINGS.keys())
     try:
         async with db_manager.get_session() as session:
+            group_settings = (
+                await session.execute(select(GroupSettings).where(GroupSettings.group_id == group_id))
+            ).scalar_one_or_none()
             if setting in custom_settings:
-                # Use key-value storage approach
-                # Check if settings row exists
-                stmt = select(GroupSettings).where(GroupSettings.group_id == group_id)
-                result = await session.execute(stmt)
-                gs = result.scalar_one_or_none()
-
-                if not gs:
-                    # Create new settings row
-                    gs = GroupSettings(group_id=group_id)
-                    session.add(gs)
-
-                # Store custom setting in a config dict
-                if not hasattr(gs, "config") or gs.config is None:
-                    gs.config = {}
-
-                gs.config[setting] = value
-                await session.commit()
-                return True
+                if not group_settings:
+                    group_settings = GroupSettings(group_id=group_id, config={})
+                    session.add(group_settings)
+                group_settings.config = {**(group_settings.config or {}), setting: value}
             else:
-                # Handle standard Group fields
-                from database import Group
-                row = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
-                if not row:
+                group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
+                if not group or not hasattr(group, setting):
                     return False
-                setattr(row, setting, value)
-                await session.commit()
-                return True
-    except Exception as e:
-        logger.error(f"Error updating setting {setting}: {e}")
+                setattr(group, setting, value)
+            await session.commit()
+            return True
+    except Exception:
+        logger.exception("Failed to update group setting %s for %s", setting, group_id)
         return False
 
 
-async def get_all_groups() -> list:
-    from database import Group, db_manager
-    from sqlalchemy import select
-
-    try:
-        async with db_manager.get_session() as session:
-            rows = (await session.execute(select(Group.id))).all()
-            return [int(row[0]) for row in rows]
-    except Exception:
-        return []
+def styled_panel_title_text(title: str) -> str:
+    return styled_panel_title(title)
 
 
-async def get_all_users() -> list:
-    from database import User, db_manager
-    from sqlalchemy import select
-
-    try:
-        async with db_manager.get_session() as session:
-            rows = (await session.execute(select(User.id))).all()
-            return [int(row[0]) for row in rows]
-    except Exception:
-        return []
+def styled_info_message(title: str, body: str) -> str:
+    return styled_info(title, body)
