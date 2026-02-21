@@ -557,7 +557,7 @@ class ModerationBot:
             if await self._should_skip_for_conversation(update, context):
                 return
             message = update.effective_message
-            if not message or not message.photo:
+            if not message:
                 return
             caption = (message.caption or "").strip()
             if caption:
@@ -565,8 +565,16 @@ class ModerationBot:
                 if not text_result.get("is_safe", True):
                     await self._delete_unsafe_message(update, context)
                     return
-            photo = message.photo[-1]
-            file = await photo.get_file()
+
+            file = None
+            if message.photo:
+                photo = message.photo[-1]
+                file = await photo.get_file()
+            elif message.document and (message.document.mime_type or "").startswith("image/"):
+                file = await message.document.get_file()
+            else:
+                return
+
             image_bytes = await file.download_as_bytearray()
             result = await moderation_service.analyze_image(bytes(image_bytes))
             if not result.get("is_safe", True):
@@ -725,8 +733,9 @@ class ModerationBot:
         self.application.add_handler(ChatMemberHandler(self.handle_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
 
         group_filter = filters.ChatType.GROUPS
-        self.application.add_handler(MessageHandler(group_filter & filters.TEXT & ~filters.COMMAND, self.moderate_text), group=1)
+        self.application.add_handler(MessageHandler(group_filter & filters.TEXT, self.moderate_text), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.PHOTO, self.moderate_photo), group=1)
+        self.application.add_handler(MessageHandler(group_filter & filters.Document.IMAGE, self.moderate_photo), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.Sticker.ALL, self.moderate_sticker), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.ANIMATION, self.moderate_animation), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.UpdateType.EDITED_MESSAGE, self.handle_edited_message), group=1)
