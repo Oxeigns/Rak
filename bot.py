@@ -610,6 +610,12 @@ class ModerationBot:
             animation = message.animation if message else None
             if not message or not animation:
                 return
+            caption = (message.caption or "").strip()
+            if caption:
+                text_result = await ai_moderation_service.analyze_message(caption)
+                if not text_result.get("is_safe", True):
+                    await self._delete_unsafe_message(update, context)
+                    return
             file = await animation.get_file()
             anim_bytes = await file.download_as_bytearray()
             result = await moderation_service.analyze_animation(
@@ -625,6 +631,38 @@ class ModerationBot:
         except Exception as exc:
             logger.error("moderate_animation failed: %s", exc)
             await self._log_error(context, exc, "moderate_animation")
+
+    async def moderate_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if await self._should_skip_for_conversation(update, context):
+                return
+            message = update.effective_message
+            if not message:
+                return
+
+            caption = (message.caption or "").strip()
+            if caption:
+                text_result = await ai_moderation_service.analyze_message(caption)
+                if not text_result.get("is_safe", True):
+                    await self._delete_unsafe_message(update, context)
+                    return
+
+            file_like = message.video or message.document or message.audio or message.voice or message.video_note
+            if file_like:
+                file = await file_like.get_file()
+                media_bytes = await file.download_as_bytearray()
+                mime_type = getattr(file_like, "mime_type", None) or "application/octet-stream"
+                file_name = getattr(file_like, "file_name", None)
+                result = await moderation_service.analyze_animation(bytes(media_bytes), mime_type=mime_type, file_name=file_name)
+                if not result.get("is_safe", True):
+                    await self._delete_unsafe_message(update, context)
+                    await self._apply_image_violation(update, context)
+                    return
+
+            await self._auto_delete_if_needed(update, context)
+        except Exception as exc:
+            logger.error("moderate_media failed: %s", exc)
+            await self._log_error(context, exc, "moderate_media")
 
     async def on_new_members(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -729,6 +767,8 @@ class ModerationBot:
         self.application.add_handler(MessageHandler(group_filter & filters.PHOTO, self.moderate_photo), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.Sticker.ALL, self.moderate_sticker), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.ANIMATION, self.moderate_animation), group=1)
+        media_filter = filters.VIDEO | filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+        self.application.add_handler(MessageHandler(group_filter & media_filter, self.moderate_media), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.UpdateType.EDITED_MESSAGE, self.handle_edited_message), group=1)
 
         self.application.add_error_handler(self.error_handler)
