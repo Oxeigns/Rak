@@ -45,8 +45,6 @@ async def moderate_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     settings = await get_group_settings(chat.id)
-    if user.is_bot and not settings.get("bot_moderation", True):
-        return
 
     text = message.text or message.caption or ""
     if settings.get("link_filter", True):

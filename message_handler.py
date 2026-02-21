@@ -42,8 +42,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except TelegramError as exc:
             logger.debug("Admin status verification failed for %s: %s", user.id, exc)
 
-    if user.is_bot and not group_settings.get("bot_moderation", True):
-        return
 
     try:
         ai_result = await asyncio.wait_for(
