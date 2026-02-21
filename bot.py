@@ -664,6 +664,44 @@ class ModerationBot:
             logger.error("moderate_media failed: %s", exc)
             await self._log_error(context, exc, "moderate_media")
 
+    async def moderate_all_content(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Run a single moderation pipeline for every group message content type."""
+        try:
+            if await self._should_skip_for_conversation(update, context):
+                return
+
+            message = update.effective_message
+            if not message:
+                return
+
+            if message.text:
+                await self.moderate_text(update, context)
+                return
+            if message.photo:
+                await self.moderate_photo(update, context)
+                return
+            if message.sticker:
+                await self.moderate_sticker(update, context)
+                return
+            if message.animation:
+                await self.moderate_animation(update, context)
+                return
+            if message.video or message.document or message.audio or message.voice or message.video_note:
+                await self.moderate_media(update, context)
+                return
+
+            caption = (message.caption or "").strip()
+            if caption:
+                result = await ai_moderation_service.analyze_message(caption)
+                if not result.get("is_safe", True):
+                    await self._delete_unsafe_message(update, context)
+                    return
+
+            await self._auto_delete_if_needed(update, context)
+        except Exception as exc:
+            logger.error("moderate_all_content failed: %s", exc)
+            await self._log_error(context, exc, "moderate_all_content")
+
     async def on_new_members(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         chat = update.effective_chat
@@ -763,12 +801,7 @@ class ModerationBot:
         self.application.add_handler(ChatMemberHandler(self.handle_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
 
         group_filter = filters.ChatType.GROUPS
-        self.application.add_handler(MessageHandler(group_filter & filters.TEXT & ~filters.COMMAND, self.moderate_text), group=1)
-        self.application.add_handler(MessageHandler(group_filter & filters.PHOTO, self.moderate_photo), group=1)
-        self.application.add_handler(MessageHandler(group_filter & filters.Sticker.ALL, self.moderate_sticker), group=1)
-        self.application.add_handler(MessageHandler(group_filter & filters.ANIMATION, self.moderate_animation), group=1)
-        media_filter = filters.VIDEO | filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
-        self.application.add_handler(MessageHandler(group_filter & media_filter, self.moderate_media), group=1)
+        self.application.add_handler(MessageHandler(group_filter & filters.ALL, self.moderate_all_content), group=1)
         self.application.add_handler(MessageHandler(group_filter & filters.UpdateType.EDITED_MESSAGE, self.handle_edited_message), group=1)
 
         self.application.add_error_handler(self.error_handler)
