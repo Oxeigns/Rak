@@ -44,8 +44,6 @@ class MessageHandlers:
         except TelegramError:
             logger.debug("Admin check failed", exc_info=True)
 
-        if user.is_bot and not settings.get("bot_moderation", True):
-            return
 
         if message.text or message.caption:
             text_result = await moderation_service.analyze_text(message.text or "", message.caption)
