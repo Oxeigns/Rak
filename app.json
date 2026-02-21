@@ -33,6 +33,11 @@
     "GEMINI_API_KEY": {
       "description": "Google Gemini API key for image analysis",
       "required": false
+    },
+    "WEB_CONCURRENCY": {
+      "description": "Number of web worker processes",
+      "required": false,
+      "value": "1"
     }
   },
   "buildpacks": [
@@ -41,7 +46,7 @@
     }
   ],
   "formation": {
-    "worker": {
+    "web": {
       "quantity": 1,
       "size": "basic"
     }
