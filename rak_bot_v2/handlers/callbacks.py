@@ -22,4 +22,5 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if query.data == "verify:join":
         ok = await enforce_force_join(update, context, settings.force_channel_id)
         msg = "✓ ᴠᴇʀɪғɪᴇᴅ! ᴀʙ ᴄᴏᴍᴍᴀɴᴅ ᴜsᴇ ᴋᴀʀᴏ." if ok else "🚫 ᴀʙʜɪ ᴛᴀᴋ ᴊᴏɪɴ ɴᴀʜɪ ᴋɪʏᴀ."
-        await query.edit_message_text(msg)
+        if query.message:
+            await query.edit_message_text(msg, parse_mode="HTML")
