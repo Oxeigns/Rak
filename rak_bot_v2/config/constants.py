@@ -21,7 +21,8 @@ MAX_DELETE_DELAY_SECONDS = 86400
 
 MAX_WARNINGS = 3
 MUTE_SECONDS = 600
-PROMO_INTERVAL_SECONDS = 43200
+PROMO_INTERVAL_SECONDS = 86400
+PROMO_MESSAGE_HINGLISH = "◆ <b>ᴘᴏᴡᴇʀᴇᴅ ʙʏ AI ɢᴏᴠᴇʀɴᴏʀ</b>\n\n━━━━━━━━━━━━\n\nʙᴇsᴛ ᴍᴏᴅᴇʀᴀᴛɪᴏɴ ʙᴏᴛ ғᴏʀ ᴛᴇʟᴇɢʀᴀᴍ ɢʀᴏᴜᴘs ✓"
 
 SUSPICIOUS_WORDS = ("admin", "support", "official")
 

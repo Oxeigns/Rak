@@ -72,3 +72,71 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         styled_card("✓ sᴀᴠᴇᴅ", f"ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ ᴀʙ {seconds}s ʜᴏ ɢᴀʏᴀ."),
         parse_mode="HTML",
     )
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show bot statistics for owner."""
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != settings.owner_id:
+        await update.effective_message.reply_text(
+            styled_card("🚫 ꜰᴏʀʙɪᴅᴅᴇɴ", "ʏᴇʜ ᴄᴏᴍᴍᴀɴᴅ ꜱɪʀꜰ ᴏᴡɴᴇʀ ᴋᴇ ʟɪʏᴇ ʜᴀɪ."),
+            parse_mode="HTML",
+        )
+        return
+    store = context.application.bot_data.get("store")
+    cache = context.application.bot_data.get("cache")
+    total_chats = len(await store.get_all_chats()) if store else 0
+    total_warn = await store.get_total_warnings() if store else 0
+    cached = len(cache._memory_cache) if cache else 0
+    text = (
+        "◆ <b>ʙᴏᴛ sᴛᴀᴛɪsᴛɪᴄs</b> 📊\n\n━━━━━━━━━━━━\n\n"
+        f"ᴛᴏᴛᴀʟ ᴄʜᴀᴛs: {total_chats}\n"
+        f"ɪʟʟᴇɢᴀʟ ᴛᴇxᴛs ᴄᴀᴄʜᴇᴅ: {cached}\n"
+        f"ᴡᴀʀɴɪɴɢs: {total_warn}\n\n"
+        f"◆ <b>ᴏᴡɴᴇʀ:</b> @{update.effective_user.username or 'N/A'}"
+    )
+    await update.effective_message.reply_text(text, parse_mode="HTML")
+
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Broadcast owner-provided message to all tracked chats."""
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != settings.owner_id:
+        return
+    if not context.args:
+        await update.effective_message.reply_text("ᴜsᴀɢᴇ: /broadcast <ᴍᴇssᴀɢᴇ>")
+        return
+    store = context.application.bot_data.get("store")
+    chats = await store.get_all_chats() if store else []
+    sent = 0
+    failed = 0
+    for chat_id, _chat_type in chats:
+        try:
+            await context.bot.send_message(chat_id, " ".join(context.args), parse_mode="HTML")
+            sent += 1
+        except Exception:  # noqa: BLE001
+            failed += 1
+    await update.effective_message.reply_text(
+        styled_card("✓ ʙʀᴏᴀᴅᴄᴀsᴛ ᴄᴏᴍᴘʟᴇᴛᴇ", f"sᴇɴᴛ: {sent}\nғᴀɪʟᴇᴅ: {failed}"),
+        parse_mode="HTML",
+    )
+
+
+async def reload_words_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reload cache word lists without restart for owner."""
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != settings.owner_id:
+        await update.effective_message.reply_text(
+            styled_card("🚫 ꜰᴏʀʙɪᴅᴅᴇɴ", "ʏᴇʜ ᴄᴏᴍᴍᴀɴᴅ ꜱɪʀꜰ ᴏᴡɴᴇʀ ᴋᴇ ʟɪʏᴇ ʜᴀɪ."),
+            parse_mode="HTML",
+        )
+        return
+    cache = context.application.bot_data.get("cache")
+    if not cache:
+        await update.effective_message.reply_text(styled_card("⚠️", "Cache unavailable."), parse_mode="HTML")
+        return
+    await cache.reload_word_lists()
+    await update.effective_message.reply_text(styled_card("✓", "Word lists reloaded."), parse_mode="HTML")

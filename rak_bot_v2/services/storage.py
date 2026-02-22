@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import time
 from pathlib import Path
 
 
@@ -28,6 +29,9 @@ class RuntimeStore:
             )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS group_config (chat_id INTEGER PRIMARY KEY, delete_delay INTEGER NOT NULL DEFAULT 60);"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS tracked_chats (chat_id INTEGER PRIMARY KEY, chat_type TEXT NOT NULL, first_seen INTEGER NOT NULL);"
             )
             conn.commit()
 
@@ -78,3 +82,36 @@ class RuntimeStore:
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("DELETE FROM warnings WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
             conn.commit()
+
+    async def track_chat(self, chat_id: int, chat_type: str) -> None:
+        """Track chat metadata for periodic broadcasts."""
+        async with self._lock:
+            await asyncio.to_thread(self._track_chat_sync, chat_id, chat_type)
+
+    def _track_chat_sync(self, chat_id: int, chat_type: str) -> None:
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO tracked_chats (chat_id, chat_type, first_seen) VALUES (?, ?, ?)",
+                (chat_id, chat_type, int(time.time())),
+            )
+            conn.commit()
+
+    async def get_all_chats(self) -> list[tuple[int, str]]:
+        """Return tracked chat ids and types."""
+        async with self._lock:
+            return await asyncio.to_thread(self._get_all_chats_sync)
+
+    def _get_all_chats_sync(self) -> list[tuple[int, str]]:
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute("SELECT chat_id, chat_type FROM tracked_chats").fetchall()
+            return [(int(row[0]), str(row[1])) for row in rows]
+
+    async def get_total_warnings(self) -> int:
+        """Return total accumulated warning entries."""
+        async with self._lock:
+            return await asyncio.to_thread(self._get_total_warnings_sync)
+
+    def _get_total_warnings_sync(self) -> int:
+        with sqlite3.connect(self._db_path) as conn:
+            row = conn.execute("SELECT COALESCE(SUM(count), 0) FROM warnings").fetchone()
+            return int(row[0]) if row else 0
