@@ -8,7 +8,8 @@ from telegram import Update
 from telegram.error import NetworkError, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from rak_bot_v2.config.settings import settings
+from rak_bot_v2.config.settings import get_settings
+
 from rak_bot_v2.core.lifespan import on_shutdown, on_startup
 from rak_bot_v2.handlers.callbacks import callback_router
 from rak_bot_v2.handlers.commands import (
@@ -34,6 +35,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     try:
+        settings = get_settings()
         error_msg = f"🚨 <b>Bot Error</b>\n\n{type(context.error).__name__}: {str(context.error)[:200]}"
         await context.bot.send_message(settings.owner_id, error_msg, parse_mode="HTML")
     except Exception:
@@ -51,6 +53,7 @@ def configure_logging() -> None:
 def build_application() -> Application:
     """Create and configure Telegram application."""
     configure_logging()
+    settings = get_settings()
     app = Application.builder().token(settings.bot_token).post_init(on_startup).post_shutdown(on_shutdown).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("panel", panel_command))

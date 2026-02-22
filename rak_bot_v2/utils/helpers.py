@@ -13,7 +13,9 @@ from telegram import ChatMemberAdministrator, ChatMemberOwner, Update
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ContextTypes
 
-from rak_bot_v2.config.settings import settings
+from rak_bot_v2.config.settings import get_settings
+
+settings = get_settings()
 
 LOGGER = logging.getLogger(__name__)
 _CALLBACK_HITS: dict[int, deque[float]] = defaultdict(deque)
