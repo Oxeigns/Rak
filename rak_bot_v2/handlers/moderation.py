@@ -10,6 +10,7 @@ from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ContextTypes
 
 from rak_bot_v2.config.constants import EDIT_DELETE_DELAY_SECONDS, MAX_WARNINGS, MUTE_SECONDS, SUSPICIOUS_WORDS, WARNING_DELETE_DELAY_SECONDS
+from rak_bot_v2.config.settings import settings
 from rak_bot_v2.services.ai_moderation import ModerationResult
 from rak_bot_v2.utils.formatters import styled_card
 from rak_bot_v2.utils.helpers import is_admin, safe_delete
@@ -20,7 +21,8 @@ LOGGER = logging.getLogger(__name__)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Moderate incoming group messages."""
     msg = update.effective_message
-    if not msg or not update.effective_chat or update.effective_chat.type == "private":
+    chat = update.effective_chat
+    if not msg or not chat or chat.type == "private":
         return
     if msg.from_user and msg.from_user.id == context.bot.id:
         return
@@ -29,11 +31,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not ai or not store:
         LOGGER.error("services_not_initialized")
         return
+    await store.track_chat(chat.id, chat.type)
+    if msg.from_user and msg.from_user.id == settings.owner_id:
+        return
     result = await _moderate_content(update, context)
     if result.action == "allow":
         return
-    await safe_delete(context, update.effective_chat.id, msg.message_id)
-    warnings = await store.increment_warning(update.effective_chat.id, msg.from_user.id) if msg.from_user else 0
+    await safe_delete(context, chat.id, msg.message_id)
+    warnings = await store.increment_warning(chat.id, msg.from_user.id) if msg.from_user else 0
     warn_msg = await msg.reply_text(
         styled_card("⚠️ ᴡᴀʀɴɪɴɢ", f"ʀᴇᴀsᴏɴ: {result.reason}\nᴄᴏᴜɴᴛ: {warnings}/{MAX_WARNINGS}"),
         parse_mode="HTML",
@@ -44,10 +49,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             WARNING_DELETE_DELAY_SECONDS,
         )
     if msg.from_user and await is_admin(update, context):
-        LOGGER.info("admin_violation chat=%s user=%s", update.effective_chat.id, msg.from_user.id)
+        LOGGER.info("admin_violation chat=%s user=%s", chat.id, msg.from_user.id)
     if warnings >= MAX_WARNINGS and msg.from_user:
         await _mute_user(update, context, msg.from_user.id)
-        await store.reset_warning(update.effective_chat.id, msg.from_user.id)
+        await store.reset_warning(chat.id, msg.from_user.id)
 
 
 async def handle_edited(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -77,15 +82,27 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 LOGGER.warning("log_failed: %s", exc)
 
 
-async def _moderate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _moderate_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> ModerationResult:
+    """Run cache checks and AI moderation for message payload."""
     msg = update.effective_message
     ai = context.application.bot_data.get("ai")
+    cache = context.application.bot_data.get("cache")
     if not ai:
         return ModerationResult(action="allow", reason="AI unavailable")
     if msg and msg.text:
-        return await ai.moderate_text(msg.text)
+        if cache and await cache.is_text_cached_illegal(msg.text):
+            return ModerationResult(action="delete", reason="Cached illegal content")
+        if cache and await cache.contains_blacklist_word(msg.text):
+            await cache.save_illegal_text(msg.text)
+            return ModerationResult(action="delete", reason="Blacklisted word detected")
+        if cache and await cache.contains_whitelist_word(msg.text):
+            return ModerationResult(action="allow", reason="Whitelisted content")
+        result = await ai.moderate_text(msg.text)
+        if cache and result.action == "delete":
+            await cache.save_illegal_text(msg.text)
+        return result
     if msg and msg.photo:
-        return await _moderate_downloaded_media(context, ai, msg.photo[-1].file_id, "image/jpeg", msg.caption or "")
+        return await _moderate_photo(update, context)
     if msg and msg.sticker:
         return await _moderate_downloaded_media(context, ai, msg.sticker.file_id, "image/webp")
     if msg and msg.animation:
@@ -96,6 +113,27 @@ async def _moderate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ModerationResult(action="allow", reason="Unsupported content")
 
 
+async def _moderate_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> ModerationResult:
+    """Moderate Telegram photo with perceptual cache then AI."""
+    msg = update.effective_message
+    ai = context.application.bot_data.get("ai")
+    cache = context.application.bot_data.get("cache")
+    if not msg or not msg.photo or not ai:
+        return ModerationResult(action="allow", reason="Unsupported photo")
+    try:
+        file = await context.bot.get_file(msg.photo[-1].file_id)
+        blob = bytes(await file.download_as_bytearray())
+        if cache and await cache.is_image_cached_illegal(blob):
+            return ModerationResult(action="delete", reason="Cached illegal image")
+        result = await ai.moderate_media(blob, "image/jpeg", msg.caption or "")
+        if cache and result.action == "delete":
+            await cache.save_illegal_image(blob)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("image_moderation_failed: %s", exc)
+        return ModerationResult(action="allow", reason="Processing failed")
+
+
 async def _moderate_downloaded_media(
     context: ContextTypes.DEFAULT_TYPE,
     ai,
@@ -103,6 +141,7 @@ async def _moderate_downloaded_media(
     mime_type: str,
     caption: str = "",
 ) -> ModerationResult:
+    """Moderate downloadable media via AI backend."""
     try:
         file = await context.bot.get_file(file_id)
         blob = await file.download_as_bytearray()
@@ -113,6 +152,7 @@ async def _moderate_downloaded_media(
 
 
 async def _mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """Apply temporary mute to user reaching warning threshold."""
     try:
         until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
         await context.bot.restrict_chat_member(
