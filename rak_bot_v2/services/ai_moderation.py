@@ -6,8 +6,10 @@ import asyncio
 import base64
 import hashlib
 import json
+import random
 import re
 import time
+import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 
@@ -20,6 +22,8 @@ from rak_bot_v2.config.constants import (
     GEMINI_MODEL,
     TEXT_MODEL,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -36,7 +40,7 @@ class AiModerationService:
     def __init__(self, groq_api_key: str, gemini_api_key: str) -> None:
         self._groq_key = groq_api_key
         self._gemini_key = gemini_api_key
-        self._client = httpx.AsyncClient(timeout=15.0)
+        self._client = httpx.AsyncClient(timeout=30.0)
         self._cache: OrderedDict[str, tuple[float, ModerationResult]] = OrderedDict()
         self._calls = deque[float]()
         self._lock = asyncio.Lock()
@@ -46,12 +50,38 @@ class AiModerationService:
         await self._client.aclose()
 
     async def moderate_text(self, text: str) -> ModerationResult:
-        """Moderate plain text with Groq model."""
+        """Moderate plain text with retries and resilient fallback."""
         key = self._cache_key("text", text)
         cached = self._get_cached(key)
         if cached:
             return cached
-        await self._acquire_rate_slot()
+
+        for attempt in range(3):
+            try:
+                await self._acquire_rate_slot()
+                result = await self._call_groq_api(text)
+                self._set_cached(key, result)
+                return result
+            except httpx.TimeoutException:
+                LOGGER.warning("groq_timeout_attempt_%s", attempt + 1)
+                if attempt < 2:
+                    await asyncio.sleep((2**attempt) + random.random())
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429:
+                    retry_after = int(exc.response.headers.get("retry-after", 60))
+                    LOGGER.warning("groq_rate_limited, waiting %s", retry_after)
+                    await asyncio.sleep(retry_after)
+                else:
+                    LOGGER.error("groq_http_error: %s", exc)
+                    break
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.error("groq_unexpected_error: %s", exc)
+                break
+
+        return ModerationResult(action="warn", reason="Service temporarily unavailable")
+
+    async def _call_groq_api(self, text: str) -> ModerationResult:
+        """Execute Groq request and parse strict JSON response."""
         payload = {
             "model": TEXT_MODEL,
             "messages": [
@@ -61,21 +91,20 @@ class AiModerationService:
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
-        try:
-            response = await self._client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self._groq_key}"},
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            parsed = json.loads(content)
-            result = ModerationResult(action=parsed.get("action", "warn"), reason=parsed.get("reason", "Rule violation"))
-        except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError, ValueError):
-            result = ModerationResult(action="warn", reason="AI service busy, safe mode warn applied")
-        self._set_cached(key, result)
-        return result
+        response = await self._client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self._groq_key}"},
+            json=payload,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+        return ModerationResult(
+            action=parsed.get("action", "warn"),
+            reason=parsed.get("reason", "Rule violation"),
+        )
 
     async def moderate_media(self, data: bytes, mime_type: str, caption: str = "") -> ModerationResult:
         """Moderate media content with Gemini vision API."""

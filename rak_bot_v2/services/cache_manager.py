@@ -8,6 +8,7 @@ import io
 import logging
 import re
 import unicodedata
+import time
 from pathlib import Path
 
 import imagehash
@@ -31,6 +32,8 @@ class CacheManager:
         self.blacklist_file = self.cache_dir / "blacklist_words.txt"
         self.whitelist_file = self.cache_dir / "whitelist_words.txt"
         self._memory_cache: set[str] = set()
+        self._access_times: dict[str, float] = {}
+        self._max_memory_items = 10000
         self._image_hashes: set[str] = set()
         self._blacklist: set[str] = set()
         self._whitelist: set[str] = set()
@@ -66,7 +69,10 @@ class CacheManager:
         """Check if text hash exists in memory cache."""
         text_hash = self._get_text_hash(text)
         async with self._lock:
-            return text_hash in self._memory_cache
+            if text_hash in self._memory_cache:
+                self._access_times[text_hash] = time.time()
+                return True
+            return False
 
     async def save_illegal_text(self, text: str) -> None:
         """Persist illegal text and remember its hash."""
@@ -74,8 +80,14 @@ class CacheManager:
         file_path = self.illegal_text_dir / f"{text_hash}.txt"
         async with self._lock:
             if text_hash in self._memory_cache:
+                self._access_times[text_hash] = time.time()
                 return
+            if len(self._memory_cache) >= self._max_memory_items and self._access_times:
+                oldest = min(self._access_times, key=self._access_times.get)
+                self._memory_cache.discard(oldest)
+                self._access_times.pop(oldest, None)
             self._memory_cache.add(text_hash)
+            self._access_times[text_hash] = time.time()
         await asyncio.to_thread(self._write_file, file_path, text)
 
     def _get_image_hash(self, image_bytes: bytes) -> str:
@@ -126,9 +138,21 @@ class CacheManager:
             return texts, images
 
         text_hashes, image_hashes = await asyncio.to_thread(_load)
+        now = time.time()
         async with self._lock:
             self._memory_cache = text_hashes
             self._image_hashes = image_hashes
+            self._access_times = {h: now for h in text_hashes}
+
+    async def cleanup_old_cache(self) -> None:
+        """Remove cache entries not accessed in the last 24 hours."""
+        cutoff = time.time() - 86400
+        async with self._lock:
+            to_remove = [h for h, ts in self._access_times.items() if ts < cutoff]
+            for h in to_remove:
+                self._memory_cache.discard(h)
+                self._access_times.pop(h, None)
+        LOGGER.info("cache_cleanup_removed: %s", len(to_remove))
 
     async def _load_word_lists(self) -> None:
         """Load blacklist and whitelist entries from text files."""
