@@ -29,3 +29,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance - validates on first call."""
     return Settings()
+
+
+settings = get_settings()
