@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from telegram.error import RetryAfter
 from telegram.ext import Application
 
 from rak_bot_v2.config.constants import PROMO_INTERVAL_SECONDS, PROMO_MESSAGE_HINGLISH
@@ -40,21 +41,42 @@ class PromoService:
             return
 
     async def _promo_loop(self, application: Application) -> None:
-        """Sleep interval then send promotions forever."""
+        """Indestructible promotion loop."""
+        await asyncio.sleep(60)
         while True:
             try:
-                await asyncio.sleep(PROMO_INTERVAL_SECONDS)
                 await self._send_promotions(application)
             except asyncio.CancelledError:
+                LOGGER.info("promo_loop_cancelled")
                 break
             except Exception as exc:  # noqa: BLE001
-                LOGGER.error("promo_loop_error: %s", exc)
-                await asyncio.sleep(3600)
+                LOGGER.exception("promo_send_failed: %s", exc)
+
+            try:
+                await asyncio.sleep(PROMO_INTERVAL_SECONDS)
+            except asyncio.CancelledError:
+                break
 
     async def _send_promotions(self, application: Application) -> None:
-        """Send promo message to every tracked chat."""
-        for chat_id, _chat_type in await self.store.get_all_chats():
+        """Send with per-chat resilience and flood-wait handling."""
+        try:
+            chats = await self.store.get_all_chats()
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("get_chats_failed: %s", exc)
+            return
+
+        for chat_id, _chat_type in chats:
             try:
-                await application.bot.send_message(chat_id, PROMO_MESSAGE_HINGLISH, parse_mode="HTML")
+                await application.bot.send_message(
+                    chat_id,
+                    PROMO_MESSAGE_HINGLISH,
+                    parse_mode="HTML",
+                    disable_notification=True,
+                )
+                LOGGER.debug("promo_sent chat=%s", chat_id)
+                await asyncio.sleep(0.1)
+            except RetryAfter as exc:
+                LOGGER.warning("promo_flood_wait chat=%s retry=%s", chat_id, exc.retry_after)
+                await asyncio.sleep(exc.retry_after)
             except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("promo_failed chat=%s err=%s", chat_id, exc)
+                LOGGER.warning("promo_failed chat=%s: %s", chat_id, exc)

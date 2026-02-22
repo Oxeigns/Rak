@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import functools
+import traceback
+import asyncio
 from collections import defaultdict, deque
 from time import monotonic
 
@@ -81,3 +84,48 @@ def callback_allowed(user_id: int, limit: int, window_seconds: int) -> bool:
         return False
     q.append(now)
     return True
+
+
+def safe_handler(func):
+    """Decorator to keep handler exceptions from bubbling up."""
+
+    @functools.wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            return await func(update, context)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("handler_crash: %s.%s - %s", func.__module__, func.__name__, exc)
+            LOGGER.debug("handler_traceback: %s", traceback.format_exc())
+            try:
+                if update and update.effective_message:
+                    await update.effective_message.reply_text(
+                        "◆ <b>⚠️ ᴇʀʀᴏʀ</b>\n\n━━━━━━━━━━━━\n\nᴋᴜᴄʜ ɢᴀʟᴀᴛ ʜᴏ ɢᴀʏᴀ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ.",
+                        parse_mode="HTML",
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+        return None
+
+    return wrapper
+
+
+async def safe_send_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    text: str,
+    parse_mode: str = "HTML",
+    max_retries: int = 3,
+) -> None:
+    """Send a message with flood-wait handling and bounded retries."""
+    for _attempt in range(max_retries):
+        try:
+            await context.bot.send_message(chat_id, text, parse_mode=parse_mode, disable_notification=True)
+            return
+        except RetryAfter as exc:
+            LOGGER.warning("flood_wait chat=%s retry=%s", chat_id, exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("send_failed chat=%s: %s", chat_id, exc)
+            return

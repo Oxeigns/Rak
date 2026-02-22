@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+from telegram import Update
+from telegram.error import NetworkError, TelegramError
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from rak_bot_v2.config.settings import settings
 from rak_bot_v2.core.lifespan import on_shutdown, on_startup
@@ -18,6 +20,24 @@ from rak_bot_v2.handlers.commands import (
     stats_command,
 )
 from rak_bot_v2.handlers.moderation import handle_edited, handle_message, handle_new_members
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log unhandled exceptions so polling keeps running."""
+    LOGGER.error("unhandled_exception: %s", context.error, exc_info=context.error)
+
+    if isinstance(context.error, (NetworkError, TelegramError)):
+        LOGGER.warning("telegram_api_error: %s", context.error)
+        return
+
+    try:
+        error_msg = f"🚨 <b>Bot Error</b>\n\n{type(context.error).__name__}: {str(context.error)[:200]}"
+        await context.bot.send_message(settings.owner_id, error_msg, parse_mode="HTML")
+    except Exception:
+        pass
 
 
 def configure_logging() -> None:
@@ -42,4 +62,5 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, handle_edited))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.StatusUpdate.ALL, handle_message))
+    app.add_error_handler(error_handler)
     return app

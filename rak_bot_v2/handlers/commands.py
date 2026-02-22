@@ -8,9 +8,10 @@ from telegram.ext import ContextTypes
 from rak_bot_v2.config.constants import MAX_DELETE_DELAY_SECONDS, MIN_DELETE_DELAY_SECONDS
 from rak_bot_v2.config.settings import settings
 from rak_bot_v2.utils.formatters import force_join_keyboard, panel_keyboard, styled_card
-from rak_bot_v2.utils.helpers import enforce_force_join, is_admin
+from rak_bot_v2.utils.helpers import enforce_force_join, is_admin, safe_handler
 
 
+@safe_handler
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start in DM and groups."""
     if not update.effective_message or not update.effective_chat:
@@ -30,6 +31,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await panel_command(update, context)
 
 
+@safe_handler
 async def panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show admin control panel."""
     if not update.effective_message:
@@ -47,6 +49,7 @@ async def panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+@safe_handler
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Update auto-delete delay for group."""
     if not update.effective_chat or not update.effective_message:
@@ -74,6 +77,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+@safe_handler
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show bot statistics for owner."""
     if not update.effective_message or not update.effective_user:
@@ -99,6 +103,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.effective_message.reply_text(text, parse_mode="HTML")
 
 
+@safe_handler
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Broadcast owner-provided message to all tracked chats."""
     if not update.effective_message or not update.effective_user:
@@ -124,6 +129,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+@safe_handler
 async def reload_words_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reload cache word lists without restart for owner."""
     if not update.effective_message or not update.effective_user:
