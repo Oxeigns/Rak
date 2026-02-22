@@ -45,7 +45,7 @@ async def panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
     await update.effective_message.reply_text(
-        styled_card("ᴀᴅᴍɪɴ ᴘᴀɴᴇʟ", "• /setdelay <sec>\n• ᴠᴇʀɪғʏ ᴊᴏɪɴ\n• ᴍᴏᴅᴇʀᴀᴛɪᴏɴ ᴏɴ"),
+        styled_card("ᴀᴅᴍɪɴ ᴘᴀɴᴇʟ", "• /setdelay &lt;sec&gt;\n• ᴠᴇʀɪғʏ ᴊᴏɪɴ\n• ᴍᴏᴅᴇʀᴀᴛɪᴏɴ ᴏɴ"),
         reply_markup=panel_keyboard(),
         parse_mode="HTML",
     )
