@@ -31,5 +31,5 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, handle_edited))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.StatusUpdate.ALL, handle_message))
     return app

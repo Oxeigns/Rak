@@ -4,24 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict, deque
-from contextvars import ContextVar
 from time import monotonic
-from uuid import uuid4
 
 from telegram import ChatMemberAdministrator, ChatMemberOwner, Update
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ContextTypes
 
-correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="-")
 LOGGER = logging.getLogger(__name__)
 _CALLBACK_HITS: dict[int, deque[float]] = defaultdict(deque)
-
-
-def set_correlation_id() -> str:
-    """Set and return request correlation ID."""
-    cid = uuid4().hex[:10]
-    correlation_id_var.set(cid)
-    return cid
 
 
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:

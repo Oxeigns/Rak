@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass
@@ -97,7 +98,8 @@ class AiModerationService:
             )
             response.raise_for_status()
             text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            parsed = json.loads(text[text.find("{") : text.rfind("}") + 1])
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            parsed = json.loads(match.group()) if match else {}
             result = ModerationResult(action=parsed.get("action", "warn"), reason=parsed.get("reason", "Suspicious media"))
         except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError, ValueError):
             result = ModerationResult(action="warn", reason="Media scan unavailable, cautious warning")
@@ -106,11 +108,13 @@ class AiModerationService:
 
     async def _acquire_rate_slot(self) -> None:
         async with self._lock:
-            now = time.time()
-            while self._calls and now - self._calls[0] > 60:
-                self._calls.popleft()
-            if len(self._calls) >= AI_RATE_LIMIT_PER_MINUTE:
-                await asyncio.sleep(1)
+            while True:
+                now = time.time()
+                while self._calls and now - self._calls[0] > 60:
+                    self._calls.popleft()
+                if len(self._calls) < AI_RATE_LIMIT_PER_MINUTE:
+                    break
+                await asyncio.sleep(0.5)
             self._calls.append(time.time())
 
     def _cache_key(self, prefix: str, content: str) -> str:

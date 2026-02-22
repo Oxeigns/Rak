@@ -12,10 +12,12 @@ class RuntimeStore:
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
+        self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Initialize tables and WAL mode."""
-        await asyncio.to_thread(self._initialize_sync)
+        async with self._lock:
+            await asyncio.to_thread(self._initialize_sync)
 
     def _initialize_sync(self) -> None:
         Path(self._db_path).touch(exist_ok=True)
@@ -31,7 +33,8 @@ class RuntimeStore:
 
     async def get_delete_delay(self, chat_id: int) -> int:
         """Get configured delete delay for group."""
-        return await asyncio.to_thread(self._get_delete_delay_sync, chat_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._get_delete_delay_sync, chat_id)
 
     def _get_delete_delay_sync(self, chat_id: int) -> int:
         with sqlite3.connect(self._db_path) as conn:
@@ -40,7 +43,8 @@ class RuntimeStore:
 
     async def set_delete_delay(self, chat_id: int, seconds: int) -> None:
         """Set delete delay for group."""
-        await asyncio.to_thread(self._set_delete_delay_sync, chat_id, seconds)
+        async with self._lock:
+            await asyncio.to_thread(self._set_delete_delay_sync, chat_id, seconds)
 
     def _set_delete_delay_sync(self, chat_id: int, seconds: int) -> None:
         with sqlite3.connect(self._db_path) as conn:
@@ -52,7 +56,8 @@ class RuntimeStore:
 
     async def increment_warning(self, chat_id: int, user_id: int) -> int:
         """Increment warning count for a user."""
-        return await asyncio.to_thread(self._increment_warning_sync, chat_id, user_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._increment_warning_sync, chat_id, user_id)
 
     def _increment_warning_sync(self, chat_id: int, user_id: int) -> int:
         with sqlite3.connect(self._db_path) as conn:
@@ -66,7 +71,8 @@ class RuntimeStore:
 
     async def reset_warning(self, chat_id: int, user_id: int) -> None:
         """Reset warning count for a user."""
-        await asyncio.to_thread(self._reset_warning_sync, chat_id, user_id)
+        async with self._lock:
+            await asyncio.to_thread(self._reset_warning_sync, chat_id, user_id)
 
     def _reset_warning_sync(self, chat_id: int, user_id: int) -> None:
         with sqlite3.connect(self._db_path) as conn:
