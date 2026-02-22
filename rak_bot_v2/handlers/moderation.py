@@ -10,7 +10,9 @@ from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ContextTypes
 
 from rak_bot_v2.config.constants import EDIT_DELETE_DELAY_SECONDS, MAX_WARNINGS, MUTE_SECONDS, SUSPICIOUS_WORDS, WARNING_DELETE_DELAY_SECONDS
-from rak_bot_v2.config.settings import settings
+from rak_bot_v2.config.settings import get_settings
+
+settings = get_settings()
 from rak_bot_v2.services.ai_moderation import ModerationResult
 from rak_bot_v2.utils.formatters import styled_card
 from rak_bot_v2.utils.helpers import is_admin, safe_delete, safe_handler
@@ -107,6 +109,9 @@ async def _delete_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         job_data = context.job.data if context.job else None
         if not job_data:
+            return
+        if not isinstance(job_data, dict):
+            LOGGER.error("invalid_job_data: %s", job_data)
             return
         await safe_delete(context, int(job_data["chat_id"]), int(job_data["message_id"]))
     except Exception as exc:  # noqa: BLE001

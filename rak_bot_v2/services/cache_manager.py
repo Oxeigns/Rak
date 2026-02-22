@@ -172,5 +172,9 @@ class CacheManager:
         LOGGER.info("word_lists_loaded blacklist=%s whitelist=%s", len(blacklist), len(whitelist))
 
     def _write_file(self, path: Path, content: str) -> None:
-        """Write content to disk with UTF-8 encoding."""
-        path.write_text(content, encoding="utf-8")
+        """Write content with error handling."""
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("cache_write_failed: %s", exc)

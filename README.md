@@ -591,3 +591,17 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 **Built with by the AI Governor Team**
+
+## Heroku dyno scaling (worker-only)
+
+```bash
+heroku ps:scale worker=1
+heroku ps:scale web=0
+```
+
+Recommended runtime config for Heroku ephemeral filesystem:
+
+```bash
+heroku config:set CACHE_DIR=/tmp/cache
+heroku config:set DATABASE_PATH=/tmp/runtime_state.db
+```

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from telegram.ext import Application
 
-from rak_bot_v2.config.settings import settings
+from rak_bot_v2.config.settings import get_settings
+
 from rak_bot_v2.services.ai_moderation import AiModerationService
 from rak_bot_v2.services.cache_manager import CacheManager
 from rak_bot_v2.services.promotion import PromoService
@@ -32,9 +34,11 @@ async def _periodic_cache_cleanup(app: Application) -> None:
 
 async def on_startup(app: Application) -> None:
     """Initialize services and attach to bot_data."""
+    settings = get_settings()
     store = RuntimeStore(settings.database_path)
     await store.initialize()
-    cache = CacheManager()
+    cache_dir = os.getenv("CACHE_DIR", "/tmp/cache")
+    cache = CacheManager(cache_dir)
     await cache.initialize()
     ai = AiModerationService(settings.groq_api_key, settings.gemini_api_key)
     promo = PromoService(store)

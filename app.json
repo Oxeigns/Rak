@@ -38,6 +38,16 @@
       "description": "Number of web worker processes",
       "required": false,
       "value": "1"
+    },
+    "CACHE_DIR": {
+      "description": "Writable cache directory for ephemeral filesystem",
+      "required": false,
+      "value": "/tmp/cache"
+    },
+    "DATABASE_PATH": {
+      "description": "SQLite runtime database path",
+      "required": false,
+      "value": "/tmp/runtime_state.db"
     }
   },
   "buildpacks": [
@@ -46,7 +56,7 @@
     }
   ],
   "formation": {
-    "web": {
+    "worker": {
       "quantity": 1,
       "size": "basic"
     }

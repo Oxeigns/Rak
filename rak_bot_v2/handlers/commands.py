@@ -6,7 +6,9 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from rak_bot_v2.config.constants import MAX_DELETE_DELAY_SECONDS, MIN_DELETE_DELAY_SECONDS
-from rak_bot_v2.config.settings import settings
+from rak_bot_v2.config.settings import get_settings
+
+settings = get_settings()
 from rak_bot_v2.utils.formatters import force_join_keyboard, panel_keyboard, styled_card
 from rak_bot_v2.utils.helpers import enforce_force_join, is_admin, safe_handler
 
