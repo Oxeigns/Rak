@@ -10,6 +10,7 @@ from telegram.ext import Application
 
 from rak_bot_v2.config.constants import PROMO_INTERVAL_SECONDS, PROMO_MESSAGE_HINGLISH
 from rak_bot_v2.services.storage import RuntimeStore
+from rak_bot_v2.utils.formatters import promo_keyboard
 
 LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class PromoService:
             LOGGER.error("get_chats_failed: %s", exc)
             return
 
+        me = await application.bot.get_me()
         for chat_id, _chat_type in chats:
             try:
                 await application.bot.send_message(
@@ -72,6 +74,7 @@ class PromoService:
                     PROMO_MESSAGE_HINGLISH,
                     parse_mode="HTML",
                     disable_notification=True,
+                    reply_markup=promo_keyboard(me.username),
                 )
                 LOGGER.debug("promo_sent chat=%s", chat_id)
                 await asyncio.sleep(0.1)

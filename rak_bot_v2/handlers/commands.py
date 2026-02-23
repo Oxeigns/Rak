@@ -9,7 +9,7 @@ from rak_bot_v2.config.constants import MAX_DELETE_DELAY_SECONDS, MIN_DELETE_DEL
 from rak_bot_v2.config.settings import get_settings
 
 settings = get_settings()
-from rak_bot_v2.utils.formatters import force_join_keyboard, panel_keyboard, styled_card
+from rak_bot_v2.utils.formatters import add_to_group_keyboard, force_join_keyboard, panel_keyboard, styled_card
 from rak_bot_v2.utils.helpers import enforce_force_join, is_admin, safe_handler
 
 
@@ -28,7 +28,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if update.effective_chat.type == "private":
         text = styled_card("ᴡᴇʟᴄᴏᴍᴇ", "ᴍᴇɪɴ ᴀɪ ɢᴏᴠᴇʀɴᴏʀ ʙᴏᴛ ʜᴜɴ. ɢʀᴏᴜᴘ ᴍᴇɪɴ ᴀᴅᴅ ᴋᴀʀᴏ ✓")
-        await update.effective_message.reply_text(text, parse_mode="HTML")
+        me = await context.bot.get_me()
+        await update.effective_message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=add_to_group_keyboard(me.username),
+        )
         return
     await panel_command(update, context)
 
