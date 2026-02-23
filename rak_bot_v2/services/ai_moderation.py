@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from rak_bot_v2.config.constants import TEXT_MODEL
 from rak_bot_v2.config.settings import get_settings
 
 LOGGER = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class ModerationService:
         self.settings = get_settings()
         self.groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY", "")
         self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY", "")
-        self.groq_model = os.getenv("GROQ_TEXT_MODERATION_MODEL", "llama-3.1-8b-instant")
+        self.groq_model = os.getenv("GROQ_TEXT_MODERATION_MODEL", TEXT_MODEL)
 
         self.gemini_model_name = os.getenv("GEMINI_IMAGE_MODERATION_MODEL", "gemini-2.5-flash").replace("models/", "")
         self.timeout_seconds = float(os.getenv("AI_TIMEOUT", "30"))
@@ -87,48 +88,66 @@ class ModerationService:
 
         await self.initialize()
 
-        system_prompt = (
-            "ROLE: AIGovernor High-Security Sentinel. "
-            "MISSION: Absolute group safety with zero false positives. "
-            "STRICT DELETION RULES (is_safe: false, illegal_score > 0.6): "
-            "1) DRUGS/DRUG DEALING: ANY mention of buying/selling drugs, narcotics, "
-            "weed, ganja, charas, ice, mdma, meth, pills, heroin, cocaine, drug deals, "
-            "drug delivery, 'maal chahiye', 'stuff available', 'score karna', 'dealer'. "
-            "Context: Medical discussions ('I need medicine from doctor') are SAFE. "
-            "2) NSFW: Sexual content, nudity references, porn links, 'nudes bhejo'\n"
-            "3) SCAMS: 'Double your crypto', 'free money', 'get rich quick', fake investment\n"
-            "4) VIOLENCE: Death threats, 'kill him', 'maar dalunga', graphic violence\n\n"
-            "SAFE CONTENT (is_safe: true, all scores 0.0):\n"
-            "- General chat, greetings, normal conversations\n"
-            "- Gaming, tech discussions, memes\n"
-            "- News sharing, educational content\n\n"
-            "OUTPUT STRICT JSON: {\"is_safe\": bool, \"toxic_score\": float, \"illegal_score\": float, \"spam_score\": float, \"reason\": \"Hinglish\"}"
-        )
-
-        payload = {
-            "model": self.groq_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Text: {text_value}\nCaption: {caption_value}"},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0,
-        }
-
         try:
-            assert self._http_client is not None
-            response = await self._http_client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.groq_api_key}"},
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            return self._normalize_text_response(json.loads(content))
+            result = await self._call_groq_api(f"Text: {text_value}\nCaption: {caption_value}")
+            return {
+                "is_safe": result.action != "delete",
+                "toxic_score": 0.0,
+                "illegal_score": 1.0 if result.action == "delete" else 0.0,
+                "spam_score": 0.0,
+                "reason": result.reason,
+            }
         except Exception as error:  # noqa: BLE001
             LOGGER.error("Groq request error: %s", error)
             return self._safe_result("Safe content, bhai, chill")
+
+    async def _call_groq_api(self, text: str) -> ModerationResult:
+        payload = {
+            "model": self.groq_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a strict moderator.\n"
+                        "Return ONLY valid JSON:\n"
+                        '{"action":"allow|warn|delete","reason":"brief"}'
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            "temperature": 0,
+        }
+
+        assert self._http_client is not None
+        response = await self._http_client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.groq_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+
+        parsed = self._safe_parse_json_object(content)
+        return self._normalize_result(parsed)
+
+    @staticmethod
+    def _safe_parse_json_object(content: str) -> dict[str, Any]:
+        parsed = ModerationService._parse_json_like_response(content)
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _normalize_result(payload: dict[str, Any]) -> ModerationResult:
+        action = str(payload.get("action", "allow")).strip().lower()
+        if action not in {"allow", "warn", "delete"}:
+            action = "allow"
+        reason = str(payload.get("reason", "Safe content, bhai, chill")).strip() or "Safe content, bhai, chill"
+        return ModerationResult(action=action, reason=reason)
 
     async def analyze_image(self, image_bytes: bytes) -> dict[str, Any]:
         """Analyze image with Gemini and fallback to OpenAI."""
