@@ -7,8 +7,6 @@ from telegram.ext import ContextTypes
 
 from rak_bot_v2.config.constants import MAX_DELETE_DELAY_SECONDS, MIN_DELETE_DELAY_SECONDS
 from rak_bot_v2.config.settings import get_settings
-
-settings = get_settings()
 from rak_bot_v2.utils.formatters import add_to_group_keyboard, force_join_keyboard, panel_keyboard, styled_card
 from rak_bot_v2.utils.helpers import enforce_force_join, is_admin, safe_handler
 
@@ -16,6 +14,7 @@ from rak_bot_v2.utils.helpers import enforce_force_join, is_admin, safe_handler
 @safe_handler
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start in DM and groups."""
+    settings = get_settings()
     if not update.effective_message or not update.effective_chat:
         return
     is_joined = await enforce_force_join(update, context, settings.force_channel_id)
@@ -87,6 +86,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 @safe_handler
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show bot statistics for owner."""
+    settings = get_settings()
     if not update.effective_message or not update.effective_user:
         return
     if update.effective_user.id != settings.owner_id:
@@ -113,6 +113,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 @safe_handler
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Broadcast owner-provided message to all tracked chats."""
+    settings = get_settings()
     if not update.effective_message or not update.effective_user:
         return
     if update.effective_user.id != settings.owner_id:
@@ -139,6 +140,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 @safe_handler
 async def reload_words_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reload cache word lists without restart for owner."""
+    settings = get_settings()
     if not update.effective_message or not update.effective_user:
         return
     if update.effective_user.id != settings.owner_id:

@@ -8,7 +8,6 @@ from telegram.ext import ContextTypes
 from rak_bot_v2.config.constants import CALLBACK_RATE_LIMIT_CLICKS, CALLBACK_RATE_LIMIT_WINDOW_SECONDS
 from rak_bot_v2.config.settings import get_settings
 
-settings = get_settings()
 from rak_bot_v2.utils.helpers import callback_allowed, enforce_force_join, is_admin, safe_edit_message_text, safe_handler
 
 
@@ -23,6 +22,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     await query.answer()
     if query.data == "verify:join":
+        settings = get_settings()
         ok = await enforce_force_join(update, context, settings.force_channel_id)
         msg = "✓ ᴠᴇʀɪғɪᴇᴅ! ᴀʙ ᴄᴏᴍᴍᴀɴᴅ ᴜsᴇ ᴋᴀʀᴏ." if ok else "🚫 ᴀʙʜɪ ᴛᴀᴋ ᴊᴏɪɴ ɴᴀʜɪ ᴋɪʏᴀ."
         await safe_edit_message_text(update, msg, parse_mode="HTML")
