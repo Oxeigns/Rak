@@ -95,8 +95,8 @@ class CacheManager:
         image = Image.open(io.BytesIO(image_bytes))
         return str(imagehash.phash(image))
 
-    async def is_image_cached_illegal(self, image_bytes: bytes, max_hamming: int = 5) -> bool:
-        """Check if image is near-duplicate of cached illegal image hashes."""
+    async def is_image_cached_illegal(self, image_bytes: bytes, max_hamming: int = 2) -> bool:
+        """Check if image is near-duplicate (stricter threshold)."""
         target_hash = imagehash.hex_to_hash(self._get_image_hash(image_bytes))
         async with self._lock:
             for cached in self._image_hashes:
@@ -115,10 +115,14 @@ class CacheManager:
         await asyncio.to_thread(self._write_file, path, "illegal")
 
     async def contains_blacklist_word(self, text: str) -> bool:
-        """Return True if blacklisted word is present in text."""
+        """Return True if blacklisted word is present (whole word match)."""
         text_lower = text.lower()
         async with self._lock:
-            return any(word in text_lower for word in self._blacklist)
+            for word in self._blacklist:
+                pattern = r"\b" + re.escape(word) + r"\b"
+                if re.search(pattern, text_lower):
+                    return True
+            return False
 
     async def contains_whitelist_word(self, text: str) -> bool:
         """Return True when normalized text exactly matches whitelist entry."""
