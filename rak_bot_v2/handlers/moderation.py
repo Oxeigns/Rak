@@ -93,7 +93,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         image_violation_counts: dict[tuple[int, int], int] = context.application.bot_data.setdefault("image_violations", {})
         key = (chat.id, user.id)
         image_violation_counts[key] = image_violation_counts.get(key, 0) + 1
-        if image_violation_counts[key] > IMAGE_VIOLATION_MUTE_THRESHOLD:
+        if image_violation_counts[key] >= IMAGE_VIOLATION_MUTE_THRESHOLD:
             await _mute_user(update, context, user.id)
             mute_msg = await msg.reply_text(
                 styled_card(
@@ -114,8 +114,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
     if warnings >= MAX_WARNINGS:
-        await _mute_user(update, context, user.id)
-        await store.reset_warning(chat.id, user.id)
+        LOGGER.info("text_warning_threshold_reached chat=%s user=%s", chat.id, user.id)
 
 
 @safe_handler
