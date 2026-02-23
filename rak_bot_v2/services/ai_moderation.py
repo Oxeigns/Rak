@@ -152,25 +152,62 @@ class AiModerationService:
         return result
 
     async def _call_gemini_with_fallback(self, payload: dict) -> str:
-        """Call Gemini API and retry with fallback models if model is unavailable."""
+        """Call Gemini API with model fallback and retries for transient failures."""
         models = (GEMINI_MODEL, *GEMINI_MODEL_FALLBACKS)
         last_error: Exception | None = None
 
         for model in models:
-            try:
-                response = await self._client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self._gemini_key}",
-                    json=payload,
-                )
-                response.raise_for_status()
-                return response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            except httpx.HTTPStatusError as exc:
-                # 404 often indicates a deprecated or unavailable model name.
-                if exc.response.status_code == 404:
-                    LOGGER.warning("gemini_model_not_found: %s", model)
+            for attempt in range(3):
+                try:
+                    response = await self._client.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self._gemini_key}",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+                except httpx.HTTPStatusError as exc:
+                    status_code = exc.response.status_code
+
+                    # 404 indicates a deprecated or unavailable model name: switch models immediately.
+                    if status_code == 404:
+                        LOGGER.warning("gemini_model_not_found: %s", model)
+                        last_error = exc
+                        break
+
+                    # Retry transient/quota pressure errors before trying the next model.
+                    if status_code in {429, 500, 502, 503, 504}:
+                        retry_after = exc.response.headers.get("retry-after")
+                        try:
+                            delay = float(retry_after) if retry_after is not None else float(min(2**attempt, 8))
+                        except ValueError:
+                            delay = float(min(2**attempt, 8))
+                        LOGGER.warning(
+                            "gemini_request_retry model=%s status=%s attempt=%s delay=%ss",
+                            model,
+                            status_code,
+                            attempt + 1,
+                            delay,
+                        )
+                        last_error = exc
+                        if attempt < 2:
+                            await asyncio.sleep(delay)
+                            continue
+                        break
+
+                    raise
+                except httpx.TimeoutException as exc:
                     last_error = exc
-                    continue
-                raise
+                    if attempt < 2:
+                        delay = min(2**attempt, 8)
+                        LOGGER.warning(
+                            "gemini_timeout_retry model=%s attempt=%s delay=%ss",
+                            model,
+                            attempt + 1,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    break
 
         if last_error:
             raise last_error
