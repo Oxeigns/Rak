@@ -15,7 +15,6 @@ from telegram.ext import ContextTypes
 
 from rak_bot_v2.config.settings import get_settings
 
-settings = get_settings()
 
 LOGGER = logging.getLogger(__name__)
 _CALLBACK_HITS: dict[int, deque[float]] = defaultdict(deque)
@@ -31,7 +30,7 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 async def is_owner(user_id: int) -> bool:
     """Return whether the provided user id is bot owner."""
-    return user_id == settings.owner_id
+    return user_id == get_settings().owner_id
 
 
 async def is_owner_or_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
