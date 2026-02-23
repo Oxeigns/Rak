@@ -108,33 +108,77 @@ class ModerationService:
                 {
                     "role": "system",
                     "content": (
-                        "You are a strict moderator.\n"
+                        "You are an elite Telegram moderation AI.\n\n"
+                        "The group contains multilingual users:\n"
+                        "- Indian languages (Hindi, Hinglish, Tamil, Bengali)\n"
+                        "- Russian\n"
+                        "- English\n\n"
+                        "Strictly detect:\n"
+                        "1. Hate speech (religion, caste, race, nationality)\n"
+                        "2. Harassment or threats\n"
+                        "3. Slang abuse (Indian & Russian)\n"
+                        "4. Spam / scams / crypto fraud / betting links\n"
+                        "5. Phishing URLs\n"
+                        "6. Adult/NSFW content\n"
+                        "7. Drugs / weapons / illegal trade\n"
+                        "8. Flooding / repeated characters\n\n"
+                        "Be context aware.\n"
+                        "Friendly joking = warn.\n"
+                        "Clear violation = delete.\n"
+                        "Safe message = allow.\n\n"
                         "Return ONLY valid JSON:\n"
-                        '{"action":"allow|warn|delete","reason":"brief"}'
+                        '{"action":"allow|warn|delete","reason":"short explanation","confidence":0.0-1.0}'
                     ),
                 },
                 {"role": "user", "content": text},
             ],
             "temperature": 0,
+            "max_tokens": 300,
+            "top_p": 1,
         }
 
         assert self._http_client is not None
-        response = await self._http_client.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.groq_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
+        try:
+            response = await self._http_client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.groq_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
 
-        response.raise_for_status()
+            response.raise_for_status()
+
+        except httpx.HTTPStatusError as exc:
+            LOGGER.error("Groq error body: %s", exc.response.text)
+            raise
 
         data = response.json()
+
+        if "choices" not in data or not data["choices"]:
+            LOGGER.error("Groq empty response: %s", data)
+            return ModerationResult("allow", "Empty AI response")
+
         content = data["choices"][0]["message"]["content"]
 
         parsed = self._safe_parse_json_object(content)
-        return self._normalize_result(parsed)
+
+        action = str(parsed.get("action", "allow")).lower()
+        reason = str(parsed.get("reason", "No reason provided"))
+
+        try:
+            confidence = float(parsed.get("confidence", 0.5))
+        except (TypeError, ValueError):
+            confidence = 0.5
+
+        if action not in {"allow", "warn", "delete"}:
+            action = "allow"
+
+        if action == "delete" and confidence < 0.65:
+            action = "warn"
+
+        return ModerationResult(action=action, reason=reason)
 
     @staticmethod
     def _safe_parse_json_object(content: str) -> dict[str, Any]:
