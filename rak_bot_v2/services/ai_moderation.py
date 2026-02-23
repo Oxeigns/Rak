@@ -20,6 +20,7 @@ from rak_bot_v2.config.constants import (
     CACHE_MAX_SIZE,
     CACHE_TTL_SECONDS,
     GEMINI_MODEL,
+    GEMINI_MODEL_FALLBACKS,
     TEXT_MODEL,
 )
 
@@ -140,12 +141,7 @@ class AiModerationService:
             ]}]
         }
         try:
-            response = await self._client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={self._gemini_key}",
-                json=payload,
-            )
-            response.raise_for_status()
-            text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            text = await self._call_gemini_with_fallback(payload)
             match = re.search(r"\{.*\}", text, re.DOTALL)
             parsed = json.loads(match.group()) if match else {}
             result = ModerationResult(action=parsed.get("action", "allow"), reason=parsed.get("reason", "No analysis"))
@@ -154,6 +150,31 @@ class AiModerationService:
             result = ModerationResult(action="allow", reason="Media scan failed - allowing")
         self._set_cached(key, result)
         return result
+
+    async def _call_gemini_with_fallback(self, payload: dict) -> str:
+        """Call Gemini API and retry with fallback models if model is unavailable."""
+        models = (GEMINI_MODEL, *GEMINI_MODEL_FALLBACKS)
+        last_error: Exception | None = None
+
+        for model in models:
+            try:
+                response = await self._client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self._gemini_key}",
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            except httpx.HTTPStatusError as exc:
+                # 404 often indicates a deprecated or unavailable model name.
+                if exc.response.status_code == 404:
+                    LOGGER.warning("gemini_model_not_found: %s", model)
+                    last_error = exc
+                    continue
+                raise
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Gemini API call failed without response")
 
     async def _acquire_rate_slot(self) -> None:
         async with self._lock:

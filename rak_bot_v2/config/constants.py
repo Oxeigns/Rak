@@ -5,7 +5,8 @@ from __future__ import annotations
 from enum import StrEnum
 
 TEXT_MODEL = "llama-3.3-70b-versatile"
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-1.5-flash-latest"
+GEMINI_MODEL_FALLBACKS = ("gemini-1.5-flash", "gemini-2.0-flash")
 
 CACHE_MAX_SIZE = 1000
 CACHE_TTL_SECONDS = 3600
