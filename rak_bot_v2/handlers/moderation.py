@@ -9,14 +9,20 @@ from telegram import ChatPermissions, Update
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ContextTypes
 
-from rak_bot_v2.config.constants import EDIT_DELETE_DELAY_SECONDS, MAX_WARNINGS, MUTE_SECONDS, SUSPICIOUS_WORDS, WARNING_DELETE_DELAY_SECONDS
+from rak_bot_v2.config.constants import (
+    EDIT_DELETE_DELAY_SECONDS,
+    IMAGE_VIOLATION_MUTE_THRESHOLD,
+    MAX_WARNINGS,
+    MUTE_SECONDS,
+    SUSPICIOUS_WORDS,
+    WARNING_DELETE_DELAY_SECONDS,
+)
 from rak_bot_v2.config.settings import get_settings
-
-settings = get_settings()
 from rak_bot_v2.services.ai_moderation import ModerationResult
-from rak_bot_v2.utils.formatters import styled_card
+from rak_bot_v2.utils.formatters import styled_card, unmute_keyboard
 from rak_bot_v2.utils.helpers import is_admin, safe_delete, safe_handler
 
+settings = get_settings()
 LOGGER = logging.getLogger(__name__)
 
 
@@ -52,23 +58,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await store.track_chat(chat.id, chat.type)
     if user.id == settings.owner_id:
         return
+
+    admin_user = await is_admin(update, context)
     result = await _moderate_content(update, context)
     if result.action == "allow":
         return
+
     await safe_delete(context, chat.id, msg.message_id)
+    if admin_user:
+        warn_msg = await msg.reply_text(
+            styled_card("⚠️ ʜᴇᴀᴅs ᴜᴘ ᴀᴅᴍɪɴ", f"ғʀɪᴇɴᴅʟʏ ɴᴏᴛᴇ: {result.reason}\nᴍsɢ ᴅᴇʟᴇᴛᴇ ᴋɪʏᴀ ɢʏᴀ ʜᴀɪ."),
+            parse_mode="HTML",
+        )
+        if context.job_queue:
+            context.job_queue.run_once(
+                _delete_warning_job,
+                WARNING_DELETE_DELAY_SECONDS,
+                data={"chat_id": warn_msg.chat_id, "message_id": warn_msg.message_id},
+            )
+        LOGGER.info("admin_violation chat=%s user=%s", chat.id, user.id)
+        return
+
     warnings = await store.increment_warning(chat.id, user.id)
-    warn_msg = await msg.reply_text(
-        styled_card("⚠️ ᴡᴀʀɴɪɴɢ", f"ʀᴇᴀsᴏɴ: {result.reason}\nᴄᴏᴜɴᴛ: {warnings}/{MAX_WARNINGS}"),
-        parse_mode="HTML",
-    )
+    warn_text = styled_card("⚠️ ᴡᴀʀɴɪɴɢ", f"ʀᴇᴀsᴏɴ: {result.reason}\nᴄᴏᴜɴᴛ: {warnings}/{MAX_WARNINGS}")
+    warn_msg = await msg.reply_text(warn_text, parse_mode="HTML")
     if context.job_queue:
         context.job_queue.run_once(
             _delete_warning_job,
             WARNING_DELETE_DELAY_SECONDS,
             data={"chat_id": warn_msg.chat_id, "message_id": warn_msg.message_id},
         )
-    if await is_admin(update, context):
-        LOGGER.info("admin_violation chat=%s user=%s", chat.id, user.id)
+
+    if _is_image_violation(msg):
+        image_violation_counts: dict[tuple[int, int], int] = context.application.bot_data.setdefault("image_violations", {})
+        key = (chat.id, user.id)
+        image_violation_counts[key] = image_violation_counts.get(key, 0) + 1
+        if image_violation_counts[key] > IMAGE_VIOLATION_MUTE_THRESHOLD:
+            await _mute_user(update, context, user.id)
+            mute_msg = await msg.reply_text(
+                styled_card(
+                    "⛔ ᴍᴜᴛᴇᴅ",
+                    "ɪᴍᴀɢᴇ ᴠɪᴏʟᴀᴛɪᴏɴ ʟɪᴍɪᴛ ᴄʀᴏss ʜᴏ ɢɪʏᴀ. ᴀᴅᴍɪɴ ɴɪᴄʜᴇ ʙᴜᴛᴛᴏɴ sᴇ ᴜɴᴍᴜᴛᴇ ᴋᴀʀ sᴀᴋᴛᴇ ʜᴀɪɴ.",
+                ),
+                parse_mode="HTML",
+                reply_markup=unmute_keyboard(user.id),
+            )
+            if context.job_queue:
+                context.job_queue.run_once(
+                    _delete_warning_job,
+                    WARNING_DELETE_DELAY_SECONDS,
+                    data={"chat_id": mute_msg.chat_id, "message_id": mute_msg.message_id},
+                )
+            image_violation_counts[key] = 0
+            await store.reset_warning(chat.id, user.id)
+            return
+
     if warnings >= MAX_WARNINGS:
         await _mute_user(update, context, user.id)
         await store.reset_warning(chat.id, user.id)
@@ -199,3 +243,8 @@ async def _mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         )
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("mute_failed chat=%s user=%s err=%s", update.effective_chat.id, user_id, exc)
+
+
+def _is_image_violation(msg) -> bool:
+    """Check whether current moderated message is image-like content."""
+    return bool(msg and (msg.photo or msg.sticker))

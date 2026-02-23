@@ -29,3 +29,22 @@ def force_join_keyboard(link: str) -> InlineKeyboardMarkup:
 def styled_card(title: str, body: str) -> str:
     """Return aesthetic Hinglish text card."""
     return f"◆ <b>{title}</b> ✓\n\n━━━━━━━━━━━━\n\n{body}"
+
+
+def add_to_group_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+    """Create add-to-group deep-link button using existing font style."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✓ ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://t.me/{bot_username}?startgroup=true")]]
+    )
+
+
+def unmute_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Create admin-only unmute action button."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✓ ᴜɴᴍᴜᴛᴇ ᴜsᴇʀ", callback_data=f"mod:unmute:{user_id}")]]
+    )
+
+
+def promo_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+    """Create consistent promotion keyboard for DM/group posts."""
+    return add_to_group_keyboard(bot_username)
