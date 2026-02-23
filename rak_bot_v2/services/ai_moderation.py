@@ -78,17 +78,32 @@ class AiModerationService:
                 LOGGER.error("groq_unexpected_error: %s", exc)
                 break
 
-        return ModerationResult(action="warn", reason="Service temporarily unavailable")
+        return ModerationResult(action="allow", reason="Moderation service unavailable - allowing message")
 
     async def _call_groq_api(self, text: str) -> ModerationResult:
-        """Execute Groq request and parse strict JSON response."""
+        """Execute Groq request with conservative moderation."""
         payload = {
             "model": TEXT_MODEL,
             "messages": [
-                {"role": "system", "content": "Return strict JSON: {\"action\":\"allow|warn|delete\",\"reason\":\"...\"}."},
-                {"role": "user", "content": f"Moderate this: {text}"},
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a strict content moderator. Analyze text for ONLY these categories:\n"
+                        "1. Hate speech / threats / harassment\n"
+                        "2. Spam / scams / phishing\n"
+                        "3. Adult/NSFW content\n"
+                        "4. Illegal activities (drugs, weapons, etc.)\n\n"
+                        "Rules:\n"
+                        "- 'delete': ONLY for clear violations (hate speech, threats, explicit adult, scams)\n"
+                        "- 'warn': Borderline cases or mild issues\n"
+                        "- 'allow': Normal conversation, greetings, questions, opinions\n\n"
+                        "Return JSON: {\"action\":\"allow|warn|delete\",\"reason\":\"brief reason\"}\n"
+                        "Be conservative - when in doubt, use 'allow' or 'warn', never 'delete'."
+                    ),
+                },
+                {"role": "user", "content": f"Analyze this message: {text}"},
             ],
-            "temperature": 0,
+            "temperature": 0.1,
             "response_format": {"type": "json_object"},
         }
         response = await self._client.post(
@@ -102,8 +117,8 @@ class AiModerationService:
         content = data["choices"][0]["message"]["content"]
         parsed = json.loads(content)
         return ModerationResult(
-            action=parsed.get("action", "warn"),
-            reason=parsed.get("reason", "Rule violation"),
+            action=parsed.get("action", "allow"),
+            reason=parsed.get("reason", "No reason provided"),
         )
 
     async def moderate_media(self, data: bytes, mime_type: str, caption: str = "") -> ModerationResult:
@@ -116,7 +131,11 @@ class AiModerationService:
         encoded = base64.b64encode(data).decode("utf-8")
         payload = {
             "contents": [{"parts": [
-                {"text": f"Analyze media for spam/toxic/illegal content. caption:{caption}. Return JSON action+reason."},
+                {"text": (
+                    "Analyze this image for: 1) Explicit adult content, 2) Violence/gore, 3) Hate symbols. "
+                    "Only return 'delete' for CLEAR violations. Otherwise 'allow'. "
+                    "Return JSON: {\"action\":\"allow|delete\",\"reason\":\"...\"}"
+                )},
                 {"inline_data": {"mime_type": mime_type, "data": encoded}},
             ]}]
         }
@@ -129,9 +148,10 @@ class AiModerationService:
             text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
             match = re.search(r"\{.*\}", text, re.DOTALL)
             parsed = json.loads(match.group()) if match else {}
-            result = ModerationResult(action=parsed.get("action", "warn"), reason=parsed.get("reason", "Suspicious media"))
-        except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError, ValueError):
-            result = ModerationResult(action="warn", reason="Media scan unavailable, cautious warning")
+            result = ModerationResult(action=parsed.get("action", "allow"), reason=parsed.get("reason", "No analysis"))
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("media_moderation_failed: %s", exc)
+            result = ModerationResult(action="allow", reason="Media scan failed - allowing")
         self._set_cached(key, result)
         return result
 
