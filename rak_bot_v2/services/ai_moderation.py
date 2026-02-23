@@ -12,6 +12,7 @@ import time
 import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -52,6 +53,9 @@ class AiModerationService:
 
     async def moderate_text(self, text: str) -> ModerationResult:
         """Moderate plain text with retries and resilient fallback."""
+        if len(text.strip()) < 2:
+            return ModerationResult(action="allow", reason="Short message")
+
         key = self._cache_key("text", text)
         cached = self._get_cached(key)
         if cached:
@@ -104,7 +108,7 @@ class AiModerationService:
                 },
                 {"role": "user", "content": f"Analyze this message: {text}"},
             ],
-            "temperature": 0.1,
+            "temperature": 0.0,
             "response_format": {"type": "json_object"},
         }
         response = await self._client.post(
@@ -116,11 +120,31 @@ class AiModerationService:
         response.raise_for_status()
         data = response.json()
         content = data["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
-        return ModerationResult(
-            action=parsed.get("action", "allow"),
-            reason=parsed.get("reason", "No reason provided"),
-        )
+        parsed = self._safe_parse_json_object(content)
+        return self._normalize_text_result(parsed)
+
+    def _safe_parse_json_object(self, content: str) -> dict[str, Any]:
+        """Best-effort JSON parsing for model outputs."""
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", content, re.DOTALL)
+            if not match:
+                LOGGER.warning("groq_invalid_json_no_object")
+                return {}
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                LOGGER.warning("groq_invalid_json_unparseable_object")
+                return {}
+
+    def _normalize_text_result(self, payload: dict[str, Any]) -> ModerationResult:
+        """Normalize AI response into supported moderation action/reason."""
+        action = str(payload.get("action", "allow")).strip().lower()
+        if action not in {"allow", "warn", "delete"}:
+            action = "allow"
+        reason = str(payload.get("reason", "No reason provided")).strip() or "No reason provided"
+        return ModerationResult(action=action, reason=reason)
 
     async def moderate_media(self, data: bytes, mime_type: str, caption: str = "") -> ModerationResult:
         """Moderate media content with Gemini vision API."""
