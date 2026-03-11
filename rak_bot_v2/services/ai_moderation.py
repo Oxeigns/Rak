@@ -209,6 +209,9 @@ class ModerationService:
 
 class AiModerationService:
     """Production wrapper for easy bot integration."""
+
+    AI_SEMAPHORE = asyncio.Semaphore(int(os.getenv("AI_MAX_CONCURRENT_CALLS", "5")))
+
     def __init__(self, groq_api_key: str, gemini_api_key: str) -> None:
         self._service = ModerationService(groq_api_key, gemini_api_key)
 
@@ -216,15 +219,25 @@ class AiModerationService:
         await self._service.cleanup()
 
     async def moderate_text(self, text: str) -> ModerationResult:
-        result = await self._service.analyze_text(text)
-        return ModerationResult(action="allow" if result["is_safe"] else "delete", reason=result["reason"])
+        try:
+            async with self.AI_SEMAPHORE:
+                result = await self._service.analyze_text(text)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("text_moderation_failed: %s", exc)
+            return ModerationResult(action="allow", reason="AI moderation unavailable")
+        return ModerationResult(action="allow" if result.get("is_safe", True) else "delete", reason=result.get("reason", "Safe content"))
 
     async def moderate_media(self, data: bytes, mime_type: str, caption: str = "") -> ModerationResult:
-        img_res = await self._service.analyze_image(data)
-        if not img_res.get("is_safe", True):
-            return ModerationResult(action="delete", reason=img_res["reason"])
-        if caption:
-            cap_res = await self._service.analyze_text(caption)
-            if not cap_res.get("is_safe", True):
-                return ModerationResult(action="delete", reason=cap_res["reason"])
+        try:
+            async with self.AI_SEMAPHORE:
+                img_res = await self._service.analyze_image(data)
+                if not img_res.get("is_safe", True):
+                    return ModerationResult(action="delete", reason=img_res.get("reason", "Image policy violation"))
+                if caption:
+                    cap_res = await self._service.analyze_text(caption)
+                    if not cap_res.get("is_safe", True):
+                        return ModerationResult(action="delete", reason=cap_res.get("reason", "Caption policy violation"))
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("media_moderation_failed: %s", exc)
+            return ModerationResult(action="allow", reason="AI moderation unavailable")
         return ModerationResult(action="allow", reason="Safe content")

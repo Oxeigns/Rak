@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -26,18 +27,14 @@ LOGGER = logging.getLogger(__name__)
 
 @safe_handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Moderate incoming group messages."""
+    """Moderate incoming group messages for every sender role."""
     if not update:
         LOGGER.error("update_is_none")
         return
 
     msg = update.effective_message
     chat = update.effective_chat
-    if not msg:
-        LOGGER.debug("no_effective_message")
-        return
-    if not chat:
-        LOGGER.debug("no_effective_chat")
+    if not msg or not chat:
         return
     if chat.type == "private":
         return
@@ -49,65 +46,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user and not is_anonymous_admin:
         LOGGER.debug("no_from_user - unsupported sender type")
         return
+
     store = context.application.bot_data.get("store")
-    ai = context.application.bot_data.get("ai")
-    if not ai or not store:
-        LOGGER.error("services_not_initialized")
+    if not store:
+        LOGGER.error("store_not_initialized")
         return
+
     await store.track_chat(chat.id, chat.type)
-    settings = get_settings()
 
-    admin_user = await is_admin(update, context) if user else False
-    is_owner = bool(user and user.id == settings.owner_id)
-    privileged_user = admin_user or is_owner or is_anonymous_admin
-
+    role = await _resolve_user_role(update, context, is_anonymous_admin)
     result = await _moderate_content(update, context)
+
     if result.action == "allow":
         return
 
-    LOGGER.info(
-        "content_flagged chat=%s user=%s action=%s privileged=%s reason=%s",
-        chat.id,
-        user.id if user else None,
-        result.action,
-        privileged_user,
-        result.reason,
+    await _log_violation(
+        context=context,
+        chat_id=chat.id,
+        message_id=msg.message_id,
+        user_id=user.id if user else None,
+        username=user.username if user else None,
+        reason=result.reason,
+        role=role,
     )
 
-    if result.action in {"warn", "delete"} and privileged_user:
-        await _send_warning_message(msg, context, result.reason, admin_notice=True)
-        await _log_violation(context, chat.id, user.id if user else None, result.reason, privileged_user=True)
-        LOGGER.info("privileged_violation chat=%s user=%s", chat.id, user.id if user else None)
-        return
-
     if result.action == "warn":
-        await _send_warning_message(msg, context, result.reason)
+        await _send_warning_message(msg, result.reason)
         return
 
-    if result.action != "delete":
-        return
+    if result.action == "delete":
+        await safe_delete(context, chat.id, msg.message_id)
+        await _send_warning_message(msg, result.reason)
 
-    await safe_delete(context, chat.id, msg.message_id)
-    await _log_violation(context, chat.id, user.id if user else None, result.reason, privileged_user=False)
-
-    if not user:
-        await _send_warning_message(msg, context, result.reason)
-        return
-
-    warnings = await store.increment_warning(chat.id, user.id)
-    warning_count = min(warnings, MAX_WARNINGS)
-    warn_text = styled_card("⚠️ ᴡᴀʀɴɪɴɢ", f"ʀᴇᴀsᴏɴ: {result.reason}\nᴄᴏᴜɴᴛ: {warning_count}/{MAX_WARNINGS}")
-    warn_msg = await msg.reply_text(warn_text, parse_mode="HTML")
-    if context.job_queue:
-        context.job_queue.run_once(
-            _delete_warning_job,
-            WARNING_DELETE_DELAY_SECONDS,
-            data={"chat_id": warn_msg.chat_id, "message_id": warn_msg.message_id},
-        )
-
-    if warnings >= MAX_WARNINGS:
-        await _mute_user(update, context, user.id)
-        await store.reset_warning(chat.id, user.id)
+        if user:
+            warnings = await store.increment_warning(chat.id, user.id)
+            if warnings >= MAX_WARNINGS:
+                await _mute_user(update, context, user.id)
+                await store.reset_warning(chat.id, user.id)
 
 
 @safe_handler
@@ -140,12 +115,34 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 LOGGER.warning("log_failed: %s", exc)
 
 
+async def _resolve_user_role(update: Update, context: ContextTypes.DEFAULT_TYPE, is_anonymous_admin: bool) -> str:
+    """Resolve sender role for moderation logs."""
+    if is_anonymous_admin:
+        return "admin"
+    user = update.effective_user
+    if not user:
+        return "member"
+
+    settings = get_settings()
+    if user.id == settings.owner_id:
+        return "owner"
+
+    try:
+        if await is_admin(update, context):
+            return "admin"
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("role_resolution_failed user=%s err=%s", user.id, exc)
+    return "member"
+
+
 async def _log_violation(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
+    message_id: int,
     user_id: int | None,
+    username: str | None,
     reason: str,
-    privileged_user: bool,
+    role: str,
 ) -> None:
     """Log moderation violations to configured log group."""
     settings = context.application.bot_data.get("settings")
@@ -153,35 +150,38 @@ async def _log_violation(
         return
 
     actor = str(user_id) if user_id is not None else "anonymous_admin"
-    role = "admin_or_owner" if privileged_user else "member"
+    handle = f"@{username}" if username else "-"
     try:
         await context.bot.send_message(
             settings.log_group_id,
-            f"🚨 moderation_violation\nchat={chat_id}\nuser={actor}\nrole={role}\nreason={reason}",
+            (
+                "🚨 moderation_violation\n"
+                f"chat_id={chat_id}\n"
+                f"message_id={message_id}\n"
+                f"user_id={actor}\n"
+                f"username={handle}\n"
+                f"role={role}\n"
+                f"reason={reason}"
+            ),
         )
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("log_failed: %s", exc)
 
 
-async def _send_warning_message(
-    msg,
-    context: ContextTypes.DEFAULT_TYPE,
-    reason: str,
-    admin_notice: bool = False,
-) -> None:
-    """Send and auto-delete warning cards for flagged messages."""
-    if admin_notice:
-        warn_text = styled_card("⚠️ ʜᴇᴀᴅs ᴜᴘ ᴀᴅᴍɪɴ", f"ғʀɪᴇɴᴅʟʏ ɴᴏᴛᴇ: {reason}\nᴍsɢ ɢʀᴏᴜᴘ ʀᴇᴠɪᴇᴡ ᴋᴇ ʟɪʏᴇ ғʟᴀɢ ᴋɪʏᴀ ɢʏᴀ ʜᴀɪ.")
-    else:
-        warn_text = styled_card("⚠️ ᴡᴀʀɴɪɴɢ", f"ʀᴇᴀsᴏɴ: {reason}")
-
+async def _send_warning_message(msg, reason: str) -> None:
+    """Send warning and auto-delete after configured delay without blocking."""
+    warn_text = styled_card("⚠️ ᴡᴀʀɴɪɴɢ", f"ʀᴇᴀsᴏɴ: {reason}")
     warn_msg = await msg.reply_text(warn_text, parse_mode="HTML")
-    if context.job_queue:
-        context.job_queue.run_once(
-            _delete_warning_job,
-            WARNING_DELETE_DELAY_SECONDS,
-            data={"chat_id": warn_msg.chat_id, "message_id": warn_msg.message_id},
-        )
+    asyncio.create_task(_auto_delete_warning(warn_msg, WARNING_DELETE_DELAY_SECONDS))
+
+
+async def _auto_delete_warning(msg, delay_seconds: int) -> None:
+    """Best-effort warning auto-deletion."""
+    await asyncio.sleep(delay_seconds)
+    try:
+        await msg.delete()
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("warning_delete_failed chat=%s msg=%s err=%s", msg.chat_id, msg.message_id, exc)
 
 
 async def _delete_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -199,33 +199,45 @@ async def _delete_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _moderate_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> ModerationResult:
-    """Run cache checks and AI moderation for message payload."""
+    """Run rule-based checks first, then AI moderation for text/media/captions."""
     msg = update.effective_message
     ai = context.application.bot_data.get("ai")
     cache = context.application.bot_data.get("cache")
+    if not msg:
+        return ModerationResult(action="allow", reason="No message")
+
+    text_payload = (msg.text or msg.caption or "").strip()
+    if text_payload:
+        if cache and await cache.is_text_cached_illegal(text_payload):
+            return ModerationResult(action="delete", reason="Cached illegal content")
+        if cache and await cache.contains_blacklist_word(text_payload):
+            await cache.save_illegal_text(text_payload)
+            return ModerationResult(action="delete", reason="Blacklisted word detected")
+        if cache and await cache.contains_whitelist_word(text_payload):
+            return ModerationResult(action="allow", reason="Whitelisted content")
+
     if not ai:
         return ModerationResult(action="allow", reason="AI unavailable")
-    if msg and msg.text:
-        if cache and await cache.is_text_cached_illegal(msg.text):
-            return ModerationResult(action="delete", reason="Cached illegal content")
-        if cache and await cache.contains_blacklist_word(msg.text):
-            await cache.save_illegal_text(msg.text)
-            return ModerationResult(action="delete", reason="Blacklisted word detected")
-        if cache and await cache.contains_whitelist_word(msg.text):
-            return ModerationResult(action="allow", reason="Whitelisted content")
-        result = await ai.moderate_text(msg.text)
-        if cache and result.action == "delete":
-            await cache.save_illegal_text(msg.text)
-        return result
-    if msg and msg.photo:
-        return await _moderate_photo(update, context)
-    if msg and msg.sticker:
-        return await _moderate_downloaded_media(context, ai, msg.sticker.file_id, "image/webp")
-    if msg and msg.animation:
-        mime_type = msg.animation.mime_type or "video/mp4"
-        return await _moderate_downloaded_media(context, ai, msg.animation.file_id, mime_type, msg.caption or "")
-    if msg and msg.caption:
-        return await ai.moderate_text(msg.caption)
+
+    try:
+        if msg.photo:
+            return await _moderate_photo(update, context)
+        if msg.sticker:
+            return await _moderate_downloaded_media(context, ai, msg.sticker.file_id, "image/webp", text_payload)
+        if msg.animation:
+            mime_type = msg.animation.mime_type or "video/mp4"
+            return await _moderate_downloaded_media(context, ai, msg.animation.file_id, mime_type, text_payload)
+        if msg.document:
+            mime_type = msg.document.mime_type or "application/octet-stream"
+            return await _moderate_downloaded_media(context, ai, msg.document.file_id, mime_type, text_payload)
+        if text_payload:
+            result = await ai.moderate_text(text_payload)
+            if cache and result.action == "delete":
+                await cache.save_illegal_text(text_payload)
+            return result
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.exception("moderation_pipeline_failed chat=%s msg=%s err=%s", update.effective_chat.id if update.effective_chat else None, msg.message_id, exc)
+
     return ModerationResult(action="allow", reason="Unsupported content")
 
 
