@@ -54,9 +54,10 @@ class ModerationService:
     @staticmethod
     def _sanitize_for_sandbox(value: str, max_length: int = 2000) -> str:
         """FIX: Protects against Prompt Injection and XML escaping."""
-        if not value: return ""
+        if not value:
+            return ""
         # Remove tags that could break out of <content> sandbox
-        sanitized = re.sub(r'</?content>|<!\[CDATA\[|(?i)ignore previous instructions', '', value)
+        sanitized = re.sub(r"</?content>|<!\[CDATA\[|ignore previous instructions", "", value, flags=re.IGNORECASE)
         sanitized = " ".join(sanitized.split())
         return sanitized[:max_length]
 
