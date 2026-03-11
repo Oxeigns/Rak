@@ -109,11 +109,174 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("
+            styled_card("🚫 ɴᴏ ᴀᴄᴄᴇss", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴅᴇʟᴀʏ ʙᴀᴅᴀʟ ꜱᴀᴋᴛᴀ ʜᴀɪ."),
+            parse_mode="HTML",
+        )
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text(
+            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇ: /setdelay 1-86400"),
+            parse_mode="HTML",
+        )
+        return
 
-[Content truncated due to size limit. Use line ranges to read in chunks]
+    seconds = int(context.args[0])
+    if seconds < MIN_DELETE_DELAY_SECONDS or seconds > MAX_DELETE_DELAY_SECONDS:
+        await update.effective_message.reply_text(
+            styled_card("ɪɴᴠᴀʟɪᴅ", "ʀᴀɴɢᴇ 1 sᴇ 86400 sᴇᴄ ᴛᴀᴋ ʀᴀᴋʜᴏ."),
+            parse_mode="HTML",
+        )
+        return
 
-(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    store = context.application.bot_data.get("store")
+    if store:
+        await store.set_delete_delay(update.effective_chat.id, seconds)
+    await update.effective_message.reply_text(
+        styled_card("✓ sᴀᴠᴇᴅ", f"ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ ᴀʙ {seconds}s ʜᴏ ɢᴀʏᴀ."),
+        parse_mode="HTML",
+    )
+
+
+# ── Owner Commands ─────────────────────────────────────────────────────────
+
+@safe_handler
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show bot statistics for owner."""
+    settings = get_settings()
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != settings.owner_id:
+        await update.effective_message.reply_text(
+            styled_card("🚫 ꜰᴏʀʙɪᴅᴅᴇɴ", "ʏᴇʜ ᴄᴏᴍᴍᴀɴᴅ ꜱɪʀꜰ ᴏᴡɴᴇʀ ᴋᴇ ʟɪʏᴇ ʜᴀɪ."),
+            parse_mode="HTML",
+        )
+        return
+    store = context.application.bot_data.get("store")
+    cache = context.application.bot_data.get("cache")
+    total_chats = len(await store.get_all_chats()) if store else 0
+    total_warn = await store.get_total_warnings() if store else 0
+    cached_texts = cache.cached_text_count if cache else 0
+    cached_imgs = cache.cached_image_count if cache else 0
+    text = styled_card(
+        "📊 ꜱᴛᴀᴛꜱ",
+        (
+            f"ᴛᴏᴛᴀʟ ᴄʜᴀᴛs: {total_chats}\n"
+            f"ᴄᴀᴄʜᴇᴅ ᴛᴇxᴛs: {cached_texts}\n"
+            f"ᴄᴀᴄʜᴇᴅ ɪᴍᴀɢᴇs: {cached_imgs}\n"
+            f"ᴡᴀʀɴɪɴɢs: {total_warn}"
+        ),
+    )
+    await update.effective_message.reply_text(text, parse_mode="HTML")
+
+
+@safe_handler
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Broadcast owner-provided message to all tracked chats."""
+    settings = get_settings()
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != settings.owner_id:
+        return
+    if not context.args:
+        await update.effective_message.reply_text("ᴜsᴀɢᴇ: /broadcast <ᴍᴇssᴀɢᴇ>")
+        return
+
+    store = context.application.bot_data.get("store")
+    chats = await store.get_all_chats() if store else []
+    sent = 0
+    failed = 0
+    for chat_id, _chat_type in chats:
+        try:
+            await context.bot.send_message(chat_id, " ".join(context.args), parse_mode="HTML")
+            sent += 1
+            await asyncio.sleep(BROADCAST_DELAY_SECONDS)
+        except Exception:  # noqa: BLE001
+            failed += 1
+
+    await update.effective_message.reply_text(
+        styled_card("✓ ʙʀᴏᴀᴅᴄᴀsᴛ ᴄᴏᴍᴘʟᴇᴛᴇ", f"sᴇɴᴛ: {sent}\nғᴀɪʟᴇᴅ: {failed}"),
+        parse_mode="HTML",
+    )
+
+
+@safe_handler
+async def reload_words_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reload cache word lists without restart for owner."""
+    settings = get_settings()
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != settings.owner_id:
+        await update.effective_message.reply_text(
+            styled_card("🚫 ꜰᴏʀʙɪᴅᴅᴇɴ", "ʏᴇʜ ᴄᴏᴍᴍᴀɴᴅ ꜱɪʀꜰ ᴏᴡɴᴇʀ ᴋᴇ ʟɪʏᴇ ʜᴀɪ."),
+            parse_mode="HTML",
+        )
+        return
+    cache = context.application.bot_data.get("cache")
+    if not cache:
+        await update.effective_message.reply_text(styled_card("⚠️", "Cache unavailable."), parse_mode="HTML")
+        return
+    await cache.reload_word_lists()
+    await update.effective_message.reply_text(styled_card("✓", "Word lists reloaded."), parse_mode="HTML")
+
+
+# ── Warn / Unwarn ──────────────────────────────────────────────────────────
+
+@safe_handler
+async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Warn a user (reply to their message)."""
+    if not update.effective_chat or not update.effective_message:
+        return
+    if not await is_admin(update, context):
+        await update.effective_message.reply_text(
+            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴡᴀʀɴ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+        )
+        return
+
+    target = get_reply_target(update)
+    if not target:
+        await update.effective_message.reply_text(
+            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+        )
+        return
+
+    if await is_target_admin(update.effective_chat.id, target.id, context):
+        await update.effective_message.reply_text(
+            styled_card("🚫", "ᴀᴅᴍɪɴ ᴋᴏ ᴡᴀʀɴ ɴᴀʜɪ ᴋᴀʀ ꜱᴀᴋᴛᴇ."), parse_mode="HTML"
+        )
+        return
+
+    store = context.application.bot_data.get("store")
+    warnings = await store.increment_warning(update.effective_chat.id, target.id) if store else 1
+    action = ""
+    if warnings >= MAX_WARNINGS:
+        warnings = 0
+        if store:
+            await store.reset_warning(update.effective_chat.id, target.id)
+        action = "\n\n⚠️ ʟɪᴍɪᴛ ᴄʀᴏss! ᴜsᴇʀ ᴍᴜᴛᴇ ᴋɪʏᴀ ɢᴀʏᴀ."
+        until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
+        try:
+            await context.bot.restrict_chat_member(
+                update.effective_chat.id,
+                target.id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until,
+            )
+        except (Forbidden, BadRequest, RetryAfter) as exc:
+            LOGGER.warning("warn_auto_mute_failed user=%s err=%s", target.id, exc)
+            action = "\n\n⚠️ ᴀᴜᴛᴏ-ᴍᴜᴛᴇ ꜰᴀɪʟᴇᴅ."
+
+    await update.effective_message.reply_text(
+        styled_card(
+            "⚠️ ᴡᴀʀɴ",
+            f"{target.mention_html()} ᴋᴏ ᴡᴀʀɴ ᴍɪʟᴀ.\nᴄᴏᴜɴᴛ: {warnings}/{MAX_WARNINGS}{action}",
+        ),
+        parse_mode="HTML",
+        reply_markup=warn_keyboard(target.id),
+    )
+
+
+@safe_handler
+async def unwarn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove one warning from a user (reply to their message)."""
     if not update.effective_chat or not update.effective_message:
         return
