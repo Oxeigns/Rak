@@ -8,6 +8,7 @@ import imghdr
 import json
 import logging
 import os
+import random
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -31,8 +32,12 @@ class ModerationResult:
 class ModerationService:
     """Dual moderation service: Groq (text) + Gemini (image) with OpenAI fallback."""
 
-    GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
-    GEMINI_BACKOFF_DELAYS_SECONDS = (2, 4, 8)
+    GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+    GEMINI_PRIORITY_MODELS = [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash-001",
+    ]
 
     def __init__(self, groq_api_key: str = "", gemini_api_key: str = "") -> None:
         self.settings = get_settings()
@@ -40,14 +45,14 @@ class ModerationService:
         self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY", "")
         self.groq_model = os.getenv("GROQ_TEXT_MODERATION_MODEL", TEXT_MODEL)
 
-        self.gemini_base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/models/")
+        self.gemini_model_name = os.getenv("GEMINI_IMAGE_MODERATION_MODEL", "gemini-2.5-flash").replace("models/", "")
         self.timeout_seconds = float(os.getenv("AI_TIMEOUT", "30"))
 
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
         self.openai_model = os.getenv("OPENAI_IMAGE_MODERATION_MODEL", "gpt-4o-mini")
 
         self._http_client: httpx.AsyncClient | None = None
-        self._last_successful_gemini_model: str | None = None
+        self._gemini_available_models: list[str] = []
 
     async def initialize(self) -> None:
         if self._http_client is None:
@@ -235,117 +240,138 @@ class ModerationService:
             LOGGER.warning("Gemini API key missing; skipping Gemini")
             return None
 
-        response_text = await self.generate_gemini_content(prompt=prompt, image_bytes=image_bytes)
-        if response_text == "All Gemini models unavailable":
+        model_candidates = await self._get_gemini_model_candidates()
+        if not model_candidates:
+            LOGGER.error("No Gemini models with generateContent support were found")
             return None
-        return self._parse_json_like_response(response_text)
 
-    async def generate_gemini_content(self, prompt: str, image_bytes: bytes | None = None) -> str:
-        """Generate Gemini content with model failover and exponential backoff."""
-        await self.initialize()
+        for model in model_candidates:
+            LOGGER.info("Gemini attempt with model=%s", model)
+            result = await self._gemini_generate_with_retry(model=model, image_bytes=image_bytes, prompt=prompt)
+            if result is not None:
+                return result
 
-        model_candidates = self._get_model_candidates()
-        retries = 0
+        LOGGER.error("All Gemini model attempts failed")
+        return None
 
-        for index, model in enumerate(model_candidates):
-            LOGGER.info("Gemini request using model=%s", model)
+    async def _get_gemini_model_candidates(self) -> list[str]:
+        if self._gemini_available_models:
+            return self._prioritized_model_order(self._gemini_available_models)
 
-            status_code, response_text = await self._gemini_generate_with_model(model=model, prompt=prompt, image_bytes=image_bytes)
-            if response_text:
-                self._last_successful_gemini_model = model
-                LOGGER.info("Gemini request succeeded with model=%s", model)
-                return response_text
+        url = f"{self.GEMINI_API_BASE}/models"
+        params = {"key": self.gemini_api_key}
 
-            should_fallback = status_code == 429 or (status_code is not None and 500 <= status_code < 600)
-            if not should_fallback:
-                LOGGER.warning("Gemini non-retryable failure with model=%s (status=%s)", model, status_code)
+        try:
+            assert self._http_client is not None
+            response = await self._http_client.get(url, params=params)
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            LOGGER.error("Gemini model discovery failed: %s", error)
+            return []
+
+        payload = response.json() if response.content else {}
+        raw_models = payload.get("models", [])
+
+        discovered: list[str] = []
+        for model in raw_models:
+            name = str(model.get("name", "")).replace("models/", "")
+            if not name:
                 continue
 
-            if index == len(model_candidates) - 1:
-                LOGGER.warning("Gemini fallback unavailable after model=%s", model)
-                break
+            methods = model.get("supportedGenerationMethods") or model.get("supported_actions") or []
+            normalized_methods = {str(method).strip() for method in methods}
+            if "generateContent" in normalized_methods:
+                discovered.append(name)
 
-            delay = self.GEMINI_BACKOFF_DELAYS_SECONDS[min(retries, len(self.GEMINI_BACKOFF_DELAYS_SECONDS) - 1)]
-            next_model = model_candidates[index + 1]
-            LOGGER.warning(
-                "Gemini fallback switch: model=%s -> %s (status=%s). Retrying in %ss",
-                model,
-                next_model,
-                status_code,
-                delay,
-            )
-            retries += 1
-            await asyncio.sleep(delay)
+        unique_discovered = sorted(set(discovered))
+        self._gemini_available_models = unique_discovered
+        LOGGER.info("Gemini discovery found %d generateContent model(s)", len(unique_discovered))
+        return self._prioritized_model_order(unique_discovered)
 
-        return "All Gemini models unavailable"
+    def _prioritized_model_order(self, discovered_models: list[str]) -> list[str]:
+        ordered: list[str] = []
 
-    def _get_model_candidates(self) -> list[str]:
-        if not self._last_successful_gemini_model:
-            return list(self.GEMINI_FALLBACK_MODELS)
+        if self.gemini_model_name and self.gemini_model_name in discovered_models:
+            ordered.append(self.gemini_model_name)
 
-        ordered = [self._last_successful_gemini_model]
-        ordered.extend(model for model in self.GEMINI_FALLBACK_MODELS if model != self._last_successful_gemini_model)
+        for model in self.GEMINI_PRIORITY_MODELS:
+            if model in discovered_models and model not in ordered:
+                ordered.append(model)
+
+        for model in discovered_models:
+            if model not in ordered:
+                ordered.append(model)
+
         return ordered
 
-    async def _gemini_generate_with_model(
-        self,
-        model: str,
-        prompt: str,
-        image_bytes: bytes | None = None,
-    ) -> tuple[int | None, str | None]:
-        image_format = imghdr.what(None, h=image_bytes) if image_bytes else None
+    async def _gemini_generate_with_retry(self, model: str, image_bytes: bytes, prompt: str) -> dict[str, Any] | None:
+        image_format = imghdr.what(None, h=image_bytes)
         mime_type = f"image/{image_format}" if image_format else "image/jpeg"
 
-        base_url = self.gemini_base_url.rstrip("/") + "/"
-        url = f"{base_url}{model}:generateContent"
+        url = f"{self.GEMINI_API_BASE}/models/{model}:generateContent"
         params = {"key": self.gemini_api_key}
-        parts: list[dict[str, Any]] = [{"text": prompt}]
-        if image_bytes:
-            parts.append(
-                {
-                    "inline_data": {
-                        "mime_type": mime_type,
-                        "data": base64.b64encode(image_bytes).decode("utf-8"),
-                    }
-                }
-            )
-
         body = {
             "contents": [
                 {
-                    "parts": parts,
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": base64.b64encode(image_bytes).decode("utf-8"),
+                            }
+                        },
+                    ]
                 }
             ],
             "generationConfig": {"temperature": 0},
         }
 
-        try:
-            assert self._http_client is not None
-            response = await self._http_client.post(url, params=params, json=body)
+        max_attempts = 4
+        base_delay = 1.0
 
-            if response.status_code == 429 or 500 <= response.status_code < 600:
-                LOGGER.warning("Gemini retryable status=%s for model=%s", response.status_code, model)
-                return response.status_code, None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                assert self._http_client is not None
+                response = await self._http_client.post(url, params=params, json=body)
 
-            response.raise_for_status()
+                if response.status_code == 404:
+                    LOGGER.warning("Gemini model not found (404): %s", model)
+                    return None
 
-            response_payload = response.json() if response.content else {}
-            text = self._extract_gemini_text(response_payload)
-            if not text:
-                LOGGER.error("Gemini returned empty response text for model=%s", model)
-                return response.status_code, None
+                if response.status_code == 429:
+                    if attempt >= max_attempts:
+                        LOGGER.error("Gemini 429 quota exhausted for model=%s after %d attempts", model, attempt)
+                        return None
 
-            return response.status_code, text
-        except httpx.HTTPStatusError as error:
-            status_code = error.response.status_code if error.response is not None else None
-            LOGGER.error("Gemini HTTP status error for model=%s status=%s", model, status_code)
-            return status_code, None
-        except httpx.HTTPError as error:
-            LOGGER.error("Gemini transport error for model=%s: %s", model, error)
-            return 503, None
-        except Exception as error:  # noqa: BLE001
-            LOGGER.error("Gemini unexpected error for model=%s: %s", model, error)
-            return None, None
+                    delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+                    LOGGER.warning(
+                        "Gemini quota hit (429) for model=%s, attempt=%d/%d, retrying in %.2fs",
+                        model,
+                        attempt,
+                        max_attempts,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                response.raise_for_status()
+
+                response_payload = response.json() if response.content else {}
+                text = self._extract_gemini_text(response_payload)
+                if not text:
+                    LOGGER.error("Gemini returned empty response text for model=%s", model)
+                    return None
+
+                return self._parse_json_like_response(text)
+            except httpx.HTTPError as error:
+                LOGGER.error("Gemini HTTP error for model=%s: %s", model, error)
+                return None
+            except Exception as error:  # noqa: BLE001
+                LOGGER.error("Gemini unexpected error for model=%s: %s", model, error)
+                return None
+
+        return None
 
     @staticmethod
     def _extract_gemini_text(payload: dict[str, Any]) -> str:
