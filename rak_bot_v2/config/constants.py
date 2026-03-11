@@ -24,7 +24,7 @@ MIN_DELETE_DELAY_SECONDS = 1
 MAX_DELETE_DELAY_SECONDS = 86400
 
 # ── Moderation Thresholds ──────────────────────────────────────────────────
-MAX_WARNINGS = 3                         # warnings before auto-mute
+MAX_WARNINGS = 50                        # warnings before auto-mute
 IMAGE_VIOLATION_MUTE_THRESHOLD = 3       # image violations before mute
 MUTE_SECONDS = 600                       # 10 min mute duration
 BAN_SECONDS = 0                          # 0 = permanent ban
