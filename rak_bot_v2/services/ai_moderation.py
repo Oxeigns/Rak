@@ -1,13 +1,13 @@
 """
-Unified AI Moderation Service - Final 10/10 Secure Version
-Features: XML Sandboxing, Deep Regex Normalization, Multi-Model Fallback, Strict JSON Enforcement.
+Unified AI Moderation Service
+Features: XML Sandboxing, Deep Regex Normalization, Multi-Model Fallback,
+          Strict JSON Enforcement, proper warn/delete/allow passthrough.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import imghdr
 import json
 import logging
 import os
@@ -19,53 +19,67 @@ import httpx
 
 LOGGER = logging.getLogger(__name__)
 
+
 @dataclass(slots=True)
 class ModerationResult:
     """Normalized moderation response for handlers."""
-    action: str
+
+    action: str   # "allow" | "warn" | "delete"
     reason: str
 
+
 class ModerationService:
-    """Dual moderation service: Groq (text) + Gemini/OpenAI (image) fallback."""
+    """Dual moderation service: Groq (text) + Gemini (image) fallback."""
 
     GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
     def __init__(self, groq_api_key: str = "", gemini_api_key: str = "") -> None:
         self.groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY", "")
         self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY", "")
-        
-        # High-performance models
+
         self.groq_model = os.getenv("GROQ_TEXT_MODERATION_MODEL", "llama-3.3-70b-versatile")
-        self.gemini_model = os.getenv("GEMINI_IMAGE_MODERATION_MODEL", "gemini-2.0-flash").replace("models/", "")
-        self.openai_model = os.getenv("OPENAI_IMAGE_MODERATION_MODEL", "gpt-4o-mini")
-        
+        self.gemini_model = (
+            os.getenv("GEMINI_IMAGE_MODERATION_MODEL", "gemini-2.0-flash")
+            .replace("models/", "")
+        )
+
         self.timeout = float(os.getenv("AI_TIMEOUT", "20.0"))
         self._http_client: httpx.AsyncClient | None = None
 
     async def initialize(self) -> None:
+        """Create shared HTTP client (idempotent)."""
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(timeout=self.timeout)
 
     async def cleanup(self) -> None:
+        """Close HTTP client."""
         if self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
 
+    # ── Helpers ────────────────────────────────────────────────────────────
+
     @staticmethod
     def _sanitize_for_sandbox(value: str, max_length: int = 2000) -> str:
-        """FIX: Protects against Prompt Injection and XML escaping."""
+        """Protect against prompt injection and XML tag injection."""
         if not value:
             return ""
-        # Remove tags that could break out of <content> sandbox
-        sanitized = re.sub(r"</?content>|<!\[CDATA\[|ignore previous instructions", "", value, flags=re.IGNORECASE)
-        sanitized = " ".join(sanitized.split())
-        return sanitized[:max_length]
+        sanitized = re.sub(
+            r"</?content>|<!\[CDATA\[|ignore previous instructions",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        return " ".join(sanitized.split())[:max_length]
 
-    def _deep_regex_scan(self, text: str) -> dict[str, Any] | None:
-        """FIX: Deep normalization to catch 'd.r u g s' or 'p_o_r_n'."""
-        normalized = re.sub(r'[^a-zA-Z0-9]', '', text.lower())
-        
-        critical_patterns = {
+    def _deep_regex_scan(self, text: str) -> ModerationResult | None:
+        """
+        Fast local deterministic check before hitting AI.
+        Normalizes text to catch obfuscated patterns like 'd.r.u.g.s'.
+        """
+        normalized = re.sub(r"[^a-zA-Z0-9]", "", text.lower())
+
+        critical_patterns: dict[str, str] = {
             r"porn|nude|sex|xxx|nsfw|onlyfans": "NSFW/Adult content",
             r"drugs?|ganja|weed|charas|heroin|meth|nasha": "Illegal substances",
             r"scam|fraud|phishing|cryptoqr|invest2x": "Scam or Fraud",
@@ -74,58 +88,62 @@ class ModerationService:
 
         for pattern, reason in critical_patterns.items():
             if re.search(pattern, normalized):
-                return {
-                    "is_safe": False,
-                    "reason": f"[Auto-Filter] {reason}",
-                }
+                return ModerationResult(action="delete", reason=f"[Auto-Filter] {reason}")
         return None
 
-    async def analyze_text(self, text: str, caption: str | None = None) -> dict[str, Any]:
-        """Strict text moderation using XML delimiters and Groq."""
-        combined_text = f"{text or ''} {caption or ''}".strip()
-        if not combined_text:
-            return {"is_safe": True, "reason": "Safe content, bhai, chill"}
+    # ── Text Moderation ────────────────────────────────────────────────────
 
-        # 1. Faster Local Deterministic Check
-        regex_result = self._deep_regex_scan(combined_text)
-        if regex_result:
-            return regex_result
+    async def moderate_text(self, text: str, caption: str | None = None) -> ModerationResult:
+        """
+        Moderate text via:
+         1. Fast local regex scan
+         2. Groq LLM (returns allow / warn / delete with reason)
+        """
+        combined = f"{text or ''} {caption or ''}".strip()
+        if not combined:
+            return ModerationResult(action="allow", reason="Empty content")
 
-        # 2. AI Check with XML Delimiters
+        # 1. Deterministic fast check
+        local_result = self._deep_regex_scan(combined)
+        if local_result:
+            return local_result
+
+        # 2. AI check
         if not self.groq_api_key:
-            return {"is_safe": True, "reason": "API key missing, skipping AI"}
+            return ModerationResult(action="allow", reason="API key missing")
 
         await self.initialize()
-        sanitized = self._sanitize_for_sandbox(combined_text)
+        sanitized = self._sanitize_for_sandbox(combined)
         prompt = (
             "Analyze the content within <content> tags for Telegram policy violations.\n"
-            "Return ONLY JSON: {\"action\":\"allow|warn|delete\",\"reason\":\"...\"}\n"
+            "Return ONLY valid JSON: {\"action\":\"allow|warn|delete\",\"reason\":\"...\"}\n"
             f"<content>\n{sanitized}\n</content>"
         )
-
-        try:
-            result = await self._call_groq_api(prompt)
-            return {
-                "is_safe": result.action != "delete",
-                "reason": result.reason,
-            }
-        except Exception as e:
-            LOGGER.error(f"Groq Error: {e}")
-            return {"is_safe": True, "reason": "Fail-safe allow"}
+        return await self._call_groq_api(prompt)
 
     async def _call_groq_api(self, prompt: str) -> ModerationResult:
-        """Enforces native JSON mode for reliable parsing."""
+        """Call Groq API with native JSON mode. Returns ModerationResult directly."""
+        if self._http_client is None:
+            raise RuntimeError("HTTP client not initialized; call initialize() first")
+
         payload = {
             "model": self.groq_model,
             "messages": [
-                {"role": "system", "content": "You are a strict security AI. Action: allow|warn|delete. Output ONLY JSON."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a strict Telegram content moderation AI. "
+                        "Classify the given content. "
+                        "action must be exactly one of: allow, warn, delete. "
+                        "Output ONLY valid JSON."
+                    ),
+                },
+                {"role": "user", "content": prompt},
             ],
             "temperature": 0,
-            "response_format": {"type": "json_object"}
+            "response_format": {"type": "json_object"},
         }
 
-        assert self._http_client is not None
         response = await self._http_client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {self.groq_api_key}"},
@@ -133,111 +151,114 @@ class ModerationService:
         )
         response.raise_for_status()
         data = response.json()
-        parsed = json.loads(data["choices"][0]["message"]["content"])
+        parsed: dict[str, Any] = json.loads(data["choices"][0]["message"]["content"])
 
-        return ModerationResult(
-            action=str(parsed.get("action", "allow")).lower(),
-            reason=str(parsed.get("reason", "Verified Safe"))
-        )
+        raw_action = str(parsed.get("action", "allow")).lower()
+        action = raw_action if raw_action in {"allow", "warn", "delete"} else "allow"
+        return ModerationResult(action=action, reason=str(parsed.get("reason", "Verified safe")))
 
-    async def analyze_image(self, image_bytes: bytes) -> dict[str, Any]:
-        """Analyzes image with fallback chain: OpenAI Vision -> Gemini."""
+    # ── Image Moderation ───────────────────────────────────────────────────
+
+    async def moderate_image(self, image_bytes: bytes, caption: str = "") -> ModerationResult:
+        """
+        Analyse image via Gemini, then optionally check caption text too.
+        Falls back to allow on any failure.
+        """
         if not image_bytes:
-            return {"is_safe": True, "reason": "No image data"}
+            return ModerationResult(action="allow", reason="No image data")
 
         await self.initialize()
-        prompt = (
-            "Analyze this image and text within it for: NSFW, Drugs, Violence, Scams.\n"
-            "Return JSON: {\"is_safe\": bool, \"reason\": \"string\"}"
+
+        img_result = await self._analyze_image_with_gemini(image_bytes)
+        if img_result and img_result.action != "allow":
+            return img_result
+
+        # Check caption separately via text moderation
+        if caption:
+            return await self.moderate_text(caption)
+
+        return ModerationResult(action="allow", reason="Clean content")
+
+    async def _analyze_image_with_gemini(self, image_bytes: bytes) -> ModerationResult | None:
+        """Send image to Gemini for NSFW/violence/scam analysis."""
+        if not self.gemini_api_key:
+            return None
+
+        url = (
+            f"{self.GEMINI_API_BASE}/models/{self.gemini_model}"
+            f":generateContent?key={self.gemini_api_key}"
         )
-
-        # 1. Try OpenAI Vision (Highly robust)
-        try:
-            res = await self._analyze_image_with_openai(image_bytes, prompt)
-            if res: return res
-        except Exception:
-            LOGGER.warning("OpenAI Vision failed, trying Gemini")
-
-        # 2. Try Gemini
-        try:
-            res = await self._analyze_image_with_gemini(image_bytes, prompt)
-            if res: return res
-        except Exception:
-            LOGGER.error("All image AI services failed")
-
-        return {"is_safe": True, "reason": "Image processing fail-safe allow"}
-
-    async def _analyze_image_with_openai(self, image_bytes: bytes, prompt: str) -> dict[str, Any] | None:
-        if not os.getenv("OPENAI_API_KEY"): return None
-        img_b64 = base64.b64encode(image_bytes).decode("utf-8")
-        payload = {
-            "model": self.openai_model,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-            ]}],
-            "response_format": {"type": "json_object"}
-        }
-        assert self._http_client is not None
-        response = await self._http_client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"},
-            json=payload
+        prompt_text = (
+            "Analyze this image for: NSFW content, Drugs, Violence, Scams, or policy violations.\n"
+            'Return ONLY JSON: {"action":"allow|warn|delete","reason":"string"}'
         )
-        data = response.json()
-        return json.loads(data["choices"][0]["message"]["content"])
-
-    async def _analyze_image_with_gemini(self, image_bytes: bytes, prompt: str) -> dict[str, Any] | None:
-        if not self.gemini_api_key: return None
-        url = f"{self.GEMINI_API_BASE}/models/{self.gemini_model}:generateContent?key={self.gemini_api_key}"
         body = {
-            "contents": [{"parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(image_bytes).decode("utf-8")}}
-            ]}]
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt_text},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/jpeg",
+                                "data": base64.b64encode(image_bytes).decode("utf-8"),
+                            }
+                        },
+                    ]
+                }
+            ]
         }
-        assert self._http_client is not None
-        response = await self._http_client.post(url, json=body)
-        if response.status_code != 200: return None
-        
-        text_output = response.json()['candidates'][0]['content']['parts'][0]['text']
-        # Robust parsing for Gemini text output
-        match = re.search(r'\{.*\}', text_output, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-        return None
+
+        if self._http_client is None:
+            return None
+
+        try:
+            response = await self._http_client.post(url, json=body)
+            if response.status_code != 200:
+                LOGGER.warning("gemini_image_failed status=%s", response.status_code)
+                return None
+
+            text_output = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            match = re.search(r"\{.*\}", text_output, re.DOTALL)
+            if not match:
+                return None
+            parsed: dict[str, Any] = json.loads(match.group())
+            raw_action = str(parsed.get("action", "allow")).lower()
+            action = raw_action if raw_action in {"allow", "warn", "delete"} else "allow"
+            return ModerationResult(action=action, reason=str(parsed.get("reason", "")))
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("gemini_image_error: %s", exc)
+            return None
+
 
 class AiModerationService:
-    """Production wrapper for easy bot integration."""
+    """Production wrapper – thin façade used by message handlers."""
 
+    # Shared semaphore to cap concurrent upstream AI calls
     AI_SEMAPHORE = asyncio.Semaphore(int(os.getenv("AI_MAX_CONCURRENT_CALLS", "5")))
 
     def __init__(self, groq_api_key: str, gemini_api_key: str) -> None:
         self._service = ModerationService(groq_api_key, gemini_api_key)
 
     async def close(self) -> None:
+        """Release HTTP resources."""
         await self._service.cleanup()
 
     async def moderate_text(self, text: str) -> ModerationResult:
+        """Moderate plain text. Returns allow / warn / delete result."""
         try:
             async with self.AI_SEMAPHORE:
-                result = await self._service.analyze_text(text)
+                return await self._service.moderate_text(text)
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("text_moderation_failed: %s", exc)
             return ModerationResult(action="allow", reason="AI moderation unavailable")
-        return ModerationResult(action="allow" if result.get("is_safe", True) else "delete", reason=result.get("reason", "Safe content"))
 
-    async def moderate_media(self, data: bytes, mime_type: str, caption: str = "") -> ModerationResult:
+    async def moderate_media(
+        self, data: bytes, mime_type: str, caption: str = ""
+    ) -> ModerationResult:
+        """Moderate image/media bytes. Returns allow / warn / delete result."""
         try:
             async with self.AI_SEMAPHORE:
-                img_res = await self._service.analyze_image(data)
-                if not img_res.get("is_safe", True):
-                    return ModerationResult(action="delete", reason=img_res.get("reason", "Image policy violation"))
-                if caption:
-                    cap_res = await self._service.analyze_text(caption)
-                    if not cap_res.get("is_safe", True):
-                        return ModerationResult(action="delete", reason=cap_res.get("reason", "Caption policy violation"))
+                return await self._service.moderate_image(data, caption)
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("media_moderation_failed: %s", exc)
             return ModerationResult(action="allow", reason="AI moderation unavailable")
-        return ModerationResult(action="allow", reason="Safe content")
