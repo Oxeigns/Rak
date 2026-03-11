@@ -34,9 +34,9 @@ class ModerationService:
 
     GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
     GEMINI_PRIORITY_MODELS = [
-        "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash-001",
+        "gemini-2.5-flash",
     ]
 
     def __init__(self, groq_api_key: str = "", gemini_api_key: str = "") -> None:
