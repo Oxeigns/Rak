@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from telegram.error import RetryAfter
+from telegram.error import Forbidden, BadRequest, RetryAfter
 from telegram.ext import Application
 
 from rak_bot_v2.config.constants import PROMO_INTERVAL_SECONDS, PROMO_MESSAGE_HINGLISH
@@ -16,33 +16,29 @@ LOGGER = logging.getLogger(__name__)
 
 
 class PromoService:
-    """Sends periodic promotion messages to tracked chats."""
+    """Sends periodic promotion messages to tracked *group* chats only."""
 
     def __init__(self, store: RuntimeStore) -> None:
-        """Initialize promotion service.
-
-        Args:
-            store: Runtime storage dependency.
-        """
         self.store = store
         self._task: asyncio.Task[None] | None = None
 
     async def start(self, application: Application) -> None:
-        """Start background promotion loop."""
+        """Start the background promotion loop."""
         self._task = asyncio.create_task(self._promo_loop(application))
 
     async def stop(self) -> None:
-        """Stop background promotion loop gracefully."""
+        """Cancel the background promotion loop gracefully."""
         if not self._task:
             return
         self._task.cancel()
         try:
             await self._task
         except asyncio.CancelledError:
-            return
+            pass
 
     async def _promo_loop(self, application: Application) -> None:
-        """Indestructible promotion loop."""
+        """Run promo sends on PROMO_INTERVAL_SECONDS cadence."""
+        # Initial delay so bot is fully ready before first promo run
         await asyncio.sleep(60)
         while True:
             try:
@@ -59,11 +55,16 @@ class PromoService:
                 break
 
     async def _send_promotions(self, application: Application) -> None:
-        """Send with per-chat resilience and flood-wait handling."""
+        """
+        Send promo message to group/supergroup chats only.
+        Handles flood-waits per chat and silently skips removed/blocked chats.
+        """
         try:
-            chats = await self.store.get_all_chats()
+            # BUG FIX: was get_all_chats() – now we only target groups so we
+            # don't spam users in private DMs (Telegram ToS violation).
+            chats = await self.store.get_group_chats()
         except Exception as exc:  # noqa: BLE001
-            LOGGER.error("get_chats_failed: %s", exc)
+            LOGGER.error("get_group_chats_failed: %s", exc)
             return
 
         me = await application.bot.get_me()
@@ -81,5 +82,8 @@ class PromoService:
             except RetryAfter as exc:
                 LOGGER.warning("promo_flood_wait chat=%s retry=%s", chat_id, exc.retry_after)
                 await asyncio.sleep(exc.retry_after)
+            except (Forbidden, BadRequest) as exc:
+                # Bot removed from group or chat not found – skip silently
+                LOGGER.info("promo_skipped chat=%s reason=%s", chat_id, exc)
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("promo_failed chat=%s: %s", chat_id, exc)
