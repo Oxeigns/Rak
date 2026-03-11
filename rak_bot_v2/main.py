@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import signal
 import sys
 
 from rak_bot_v2.core.bot import build_application
 
+LOGGER = logging.getLogger(__name__)
+
 
 def main() -> int:
-    """Run bot polling with graceful shutdown."""
+    """Run bot polling with graceful shutdown. Returns 0 on success, 1 on error."""
     try:
         app = build_application()
 
@@ -29,6 +32,8 @@ def main() -> int:
         )
         return 0
     except Exception:
+        # BUG FIX: was silently returning 1; now logs the full traceback
+        LOGGER.exception("fatal_startup_error")
         return 1
 
 
