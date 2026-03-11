@@ -43,10 +43,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     user = msg.from_user
-    if not user:
-        LOGGER.debug("no_from_user - channel post or anonymous")
+    is_anonymous_admin = bool(msg.sender_chat and msg.sender_chat.id == chat.id and not user)
+    if user and user.id == context.bot.id:
         return
-    if user.id == context.bot.id:
+    if not user and not is_anonymous_admin:
+        LOGGER.debug("no_from_user - unsupported sender type")
         return
     store = context.application.bot_data.get("store")
     ai = context.application.bot_data.get("ai")
@@ -55,30 +56,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     await store.track_chat(chat.id, chat.type)
     settings = get_settings()
-    if user.id == settings.owner_id:
-        return
 
-    admin_user = await is_admin(update, context)
+    admin_user = await is_admin(update, context) if user else False
+    is_owner = bool(user and user.id == settings.owner_id)
+    privileged_user = admin_user or is_owner or is_anonymous_admin
+
     result = await _moderate_content(update, context)
     if result.action == "allow":
         return
+
+    LOGGER.info(
+        "content_flagged chat=%s user=%s action=%s privileged=%s reason=%s",
+        chat.id,
+        user.id if user else None,
+        result.action,
+        privileged_user,
+        result.reason,
+    )
+
+    if result.action in {"warn", "delete"} and privileged_user:
+        await _send_warning_message(msg, context, result.reason, admin_notice=True)
+        await _log_violation(context, chat.id, user.id if user else None, result.reason, privileged_user=True)
+        LOGGER.info("privileged_violation chat=%s user=%s", chat.id, user.id if user else None)
+        return
+
+    if result.action == "warn":
+        await _send_warning_message(msg, context, result.reason)
+        return
+
     if result.action != "delete":
-        LOGGER.info("content_flagged chat=%s user=%s action=%s reason=%s", chat.id, user.id, result.action, result.reason)
         return
 
     await safe_delete(context, chat.id, msg.message_id)
-    if admin_user:
-        warn_msg = await msg.reply_text(
-            styled_card("⚠️ ʜᴇᴀᴅs ᴜᴘ ᴀᴅᴍɪɴ", f"ғʀɪᴇɴᴅʟʏ ɴᴏᴛᴇ: {result.reason}\nᴍsɢ ᴅᴇʟᴇᴛᴇ ᴋɪʏᴀ ɢʏᴀ ʜᴀɪ."),
-            parse_mode="HTML",
-        )
-        if context.job_queue:
-            context.job_queue.run_once(
-                _delete_warning_job,
-                WARNING_DELETE_DELAY_SECONDS,
-                data={"chat_id": warn_msg.chat_id, "message_id": warn_msg.message_id},
-            )
-        LOGGER.info("admin_violation chat=%s user=%s", chat.id, user.id)
+    await _log_violation(context, chat.id, user.id if user else None, result.reason, privileged_user=False)
+
+    if not user:
+        await _send_warning_message(msg, context, result.reason)
         return
 
     warnings = await store.increment_warning(chat.id, user.id)
@@ -125,6 +138,50 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await context.bot.send_message(context.application.bot_data["settings"].log_group_id, f"🚫 suspicious join: {member.id}")
             except (Forbidden, BadRequest, RetryAfter) as exc:
                 LOGGER.warning("log_failed: %s", exc)
+
+
+async def _log_violation(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    user_id: int | None,
+    reason: str,
+    privileged_user: bool,
+) -> None:
+    """Log moderation violations to configured log group."""
+    settings = context.application.bot_data.get("settings")
+    if not settings:
+        return
+
+    actor = str(user_id) if user_id is not None else "anonymous_admin"
+    role = "admin_or_owner" if privileged_user else "member"
+    try:
+        await context.bot.send_message(
+            settings.log_group_id,
+            f"🚨 moderation_violation\nchat={chat_id}\nuser={actor}\nrole={role}\nreason={reason}",
+        )
+    except (Forbidden, BadRequest, RetryAfter) as exc:
+        LOGGER.warning("log_failed: %s", exc)
+
+
+async def _send_warning_message(
+    msg,
+    context: ContextTypes.DEFAULT_TYPE,
+    reason: str,
+    admin_notice: bool = False,
+) -> None:
+    """Send and auto-delete warning cards for flagged messages."""
+    if admin_notice:
+        warn_text = styled_card("⚠️ ʜᴇᴀᴅs ᴜᴘ ᴀᴅᴍɪɴ", f"ғʀɪᴇɴᴅʟʏ ɴᴏᴛᴇ: {reason}\nᴍsɢ ɢʀᴏᴜᴘ ʀᴇᴠɪᴇᴡ ᴋᴇ ʟɪʏᴇ ғʟᴀɢ ᴋɪʏᴀ ɢʏᴀ ʜᴀɪ.")
+    else:
+        warn_text = styled_card("⚠️ ᴡᴀʀɴɪɴɢ", f"ʀᴇᴀsᴏɴ: {reason}")
+
+    warn_msg = await msg.reply_text(warn_text, parse_mode="HTML")
+    if context.job_queue:
+        context.job_queue.run_once(
+            _delete_warning_job,
+            WARNING_DELETE_DELAY_SECONDS,
+            data={"chat_id": warn_msg.chat_id, "message_id": warn_msg.message_id},
+        )
 
 
 async def _delete_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
