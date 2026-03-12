@@ -43,12 +43,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not query or not update.effective_user:
         return
 
+    # 1. Rate Limiting Check
     if not callback_allowed(
         update.effective_user.id,
         CALLBACK_RATE_LIMIT_CLICKS,
         CALLBACK_RATE_LIMIT_WINDOW_SECONDS,
     ):
-        await query.answer("Slow down bhai, thoda wait karo.", show_alert=True)
+        await query.answer("Rate limit exceeded. Please wait a moment.", show_alert=True)
         return
 
     await query.answer()
@@ -59,58 +60,60 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         settings = get_settings()
         ok = await enforce_force_join(update, context, settings.force_channel_id)
         msg = (
-            "✓ ᴠᴇʀɪғɪᴇᴅ! ᴀʙ ᴄᴏᴍᴍᴀɴᴅ ᴜsᴇ ᴋᴀʀᴏ."
+            "Verification successful! You can now use the bot."
             if ok
-            else "🚫 ᴀʙʜɪ ᴛᴀᴋ ᴊᴏɪɴ ɴᴀʜɪ ᴋɪʏᴀ."
+            else "Access Denied: You have not joined the channel yet."
         )
-        await safe_edit_message_text(update, styled_card("ᴠᴇʀɪғɪᴄᴀᴛɪᴏɴ", msg))
+        await safe_edit_message_text(update, styled_card("VERIFICATION", msg))
         return
 
-    # ── BUG FIX: cfg:delay now has an actual handler ───────────────────────
+    # ── Config: Delete Delay ───────────────────────────────────────────────
     if data == "cfg:delay:prompt":
         if not await is_admin(update, context):
-            await query.answer("sɪʀꜰ ᴀᴅᴍɪɴ ʏᴇʜ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ.", show_alert=True)
+            await query.answer("Only administrators can modify settings.", show_alert=True)
             return
         await safe_edit_message_text(
             update,
             styled_card(
-                "⏱ sᴇᴛ ᴅᴇʟᴀʏ",
-                "ᴅᴇʟᴀʏ ʙᴀᴅʟᴏ:\n\n<code>/setdelay &lt;seconds&gt;</code>\n\nᴇ.ɢ. <code>/setdelay 120</code>",
+                "SET AUTO-DELETE",
+                "To change the delay, use the command:\n\n<code>/setdelay [seconds]</code>\n\nExample: <code>/setdelay 60</code>",
             ),
         )
         return
 
-    # ── Inline stats for admins ────────────────────────────────────────────
+    # ── Inline stats ───────────────────────────────────────────────────────
     if data == "cfg:stats":
         if not await is_admin(update, context):
-            await query.answer("sɪʀꜰ ᴀᴅᴍɪɴ ꜱᴛᴀᴛs ᴅᴇᴋʜ ꜱᴀᴋᴛᴇ ʜᴀɪɴ.", show_alert=True)
+            await query.answer("Only administrators can view statistics.", show_alert=True)
             return
         store = context.application.bot_data.get("store")
         cache = context.application.bot_data.get("cache")
+        
         total_chats = len(await store.get_all_chats()) if store else 0
         total_warn = await store.get_total_warnings() if store else 0
         cached_texts = cache.cached_text_count if cache else 0
         cached_imgs = cache.cached_image_count if cache else 0
+        
         text = styled_card(
-            "📊 ꜱᴛᴀᴛꜱ",
+            "SYSTEM STATISTICS",
             (
-                f"ᴛᴏᴛᴀʟ ᴄʜᴀᴛs: {total_chats}\n"
-                f"ᴄᴀᴄʜᴇᴅ ᴛᴇxᴛs: {cached_texts}\n"
-                f"ᴄᴀᴄʜᴇᴅ ɪᴍᴀɢᴇs: {cached_imgs}\n"
-                f"ᴡᴀʀɴɪɴɢs: {total_warn}"
+                f"Total Tracked Chats: {total_chats}\n"
+                f"Cached Illegal Texts: {cached_texts}\n"
+                f"Cached Illegal Images: {cached_imgs}\n"
+                f"Global Warnings Issued: {total_warn}"
             ),
         )
         await safe_edit_message_text(update, text)
         return
 
-    # ── Unmute ─────────────────────────────────────────────────────────────
+    # ── Unmute Action ──────────────────────────────────────────────────────
     if data.startswith("mod:unmute:"):
         target = data.rsplit(":", 1)[-1]
         if target.isdigit():
             await _handle_unmute(update, context, int(target))
         return
 
-    # ── Clear warnings ─────────────────────────────────────────────────────
+    # ── Clear Warnings Action ──────────────────────────────────────────────
     if data.startswith("mod:clearwarn:"):
         target = data.rsplit(":", 1)[-1]
         if target.isdigit():
@@ -121,42 +124,47 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def _handle_unmute(
     update: Update, context: ContextTypes.DEFAULT_TYPE, target_user_id: int
 ) -> None:
-    """Allow admins to unmute a warned user via inline button."""
+    """Allow admins to unmute a user via inline button."""
     query = update.callback_query
     if not query or not update.effective_chat:
         return
+    
     if not await is_admin(update, context):
-        await query.answer("sɪʀꜰ ᴀᴅᴍɪɴ ᴜɴᴍᴜᴛᴇ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ.", show_alert=True)
+        await query.answer("Administrative privileges required.", show_alert=True)
         return
+        
     try:
         await context.bot.restrict_chat_member(
             update.effective_chat.id, target_user_id, permissions=_FULL_PERMISSIONS
         )
-        await query.answer("✓ ᴜsᴇʀ ᴜɴᴍᴜᴛᴇᴅ", show_alert=False)
+        await query.answer("User unmuted successfully.")
         await safe_edit_message_text(
             update,
-            styled_card("🔊 ᴜɴᴍᴜᴛᴇᴅ", f"ᴜsᴇʀ <code>{target_user_id}</code> ᴀʙ ʙᴏʟ ꜱᴀᴋᴛᴀ ʜᴀɪ."),
+            styled_card("USER UNMUTED", f"User <code>{target_user_id}</code> is now permitted to speak."),
         )
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("unmute_failed user=%s err=%s", target_user_id, exc)
-        await query.answer("⚠️ Unmute failed.", show_alert=True)
+        await query.answer("Failed to unmute user. Check bot permissions.", show_alert=True)
 
 
 async def _handle_clear_warn(
     update: Update, context: ContextTypes.DEFAULT_TYPE, target_user_id: int
 ) -> None:
-    """Allow admins to clear a user's warning count via inline button."""
+    """Allow admins to reset a user's warning count via inline button."""
     query = update.callback_query
     if not query or not update.effective_chat:
         return
+    
     if not await is_admin(update, context):
-        await query.answer("sɪʀꜰ ᴀᴅᴍɪɴ ᴡᴀʀɴ ᴄʟᴇᴀʀ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ.", show_alert=True)
+        await query.answer("Administrative privileges required.", show_alert=True)
         return
+        
     store = context.application.bot_data.get("store")
     if store:
         await store.reset_warning(update.effective_chat.id, target_user_id)
-    await query.answer("✓ ᴡᴀʀɴɪɴɢs ᴄʟᴇᴀʀᴇᴅ", show_alert=False)
+        
+    await query.answer("Warning count reset.")
     await safe_edit_message_text(
         update,
-        styled_card("✓", f"ᴜsᴇʀ <code>{target_user_id}</code> ᴋɪ ᴡᴀʀɴɪɴɢs ʜᴀᴛᴀ ᴅɪ ɢᴀɪɴ."),
+        styled_card("WARNINGS CLEARED", f"All warnings for user <code>{target_user_id}</code> have been removed."),
     )
