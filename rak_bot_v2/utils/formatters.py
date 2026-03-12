@@ -11,9 +11,9 @@ def panel_keyboard() -> InlineKeyboardMarkup:
     """Create admin control panel keyboard."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("SET DELAY", callback_data="cfg:delay:prompt", style="primary")],
-            [InlineKeyboardButton("VERIFY JOIN", callback_data="verify:join", style="success")],
-            [InlineKeyboardButton("STATS", callback_data="cfg:stats", style="primary")],
+            [InlineKeyboardButton("SET DELAY", callback_data="cfg:delay:prompt", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("VERIFY JOIN", callback_data="verify:join", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("STATS", callback_data="cfg:stats", api_kwargs={"style": "primary"})],
         ]
     )
 
@@ -22,8 +22,8 @@ def force_join_keyboard(link: str) -> InlineKeyboardMarkup:
     """Create force-join CTA keyboard."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("JOIN CHANNEL", url=str(link), style="primary")],
-            [InlineKeyboardButton("VERIFY", callback_data="verify:join", style="success")],
+            [InlineKeyboardButton("JOIN CHANNEL", url=str(link), api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("VERIFY", callback_data="verify:join", api_kwargs={"style": "success"})],
         ]
     )
 
@@ -31,7 +31,7 @@ def force_join_keyboard(link: str) -> InlineKeyboardMarkup:
 def verify_keyboard() -> InlineKeyboardMarkup:
     """Create verify-only CTA keyboard."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("VERIFY", callback_data="verify:join", style="success")]]
+        [[InlineKeyboardButton("VERIFY", callback_data="verify:join", api_kwargs={"style": "success"})]]
     )
 
 
@@ -41,7 +41,7 @@ def add_to_group_keyboard(bot_username: str) -> InlineKeyboardMarkup:
         [[InlineKeyboardButton(
             "ADD TO GROUP",
             url=f"https://t.me/{bot_username}?startgroup=true",
-            style="primary",
+            api_kwargs={"style": "primary"},
         )]]
     )
 
@@ -49,14 +49,14 @@ def add_to_group_keyboard(bot_username: str) -> InlineKeyboardMarkup:
 def unmute_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Create admin-only unmute action button."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("UNMUTE USER", callback_data=f"mod:unmute:{user_id}", style="success")]]
+        [[InlineKeyboardButton("UNMUTE USER", callback_data=f"mod:unmute:{user_id}", api_kwargs={"style": "success"})]]
     )
 
 
 def warn_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Create admin-only warn-reset button."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("CLEAR WARNINGS", callback_data=f"mod:clearwarn:{user_id}", style="success")]]
+        [[InlineKeyboardButton("CLEAR WARNINGS", callback_data=f"mod:clearwarn:{user_id}", api_kwargs={"style": "success"})]]
     )
 
 
@@ -67,11 +67,11 @@ def moderation_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("DELETE + BAN", callback_data=f"mod:ban:{user_id}", style="danger")],
-            [InlineKeyboardButton("DELETE + MUTE", callback_data=f"mod:mute:{user_id}", style="danger")],
+            [InlineKeyboardButton("DELETE + BAN", callback_data=f"mod:ban:{user_id}", api_kwargs={"style": "danger"})],
+            [InlineKeyboardButton("DELETE + MUTE", callback_data=f"mod:mute:{user_id}", api_kwargs={"style": "danger"})],
             [InlineKeyboardButton("DELETE + WARN", callback_data=f"mod:warn:{user_id}")],
             [InlineKeyboardButton("DELETE ONLY", callback_data=f"mod:delete:{user_id}")],
-            [InlineKeyboardButton("IGNORE", callback_data=f"mod:ignore:{user_id}", style="success")],
+            [InlineKeyboardButton("IGNORE", callback_data=f"mod:ignore:{user_id}", api_kwargs={"style": "success"})],
         ]
     )
 
@@ -84,21 +84,21 @@ def admin_commands_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             # Danger Zone - Destructive Actions
-            [InlineKeyboardButton("BAN", callback_data="cmd:ban", style="danger")],
-            [InlineKeyboardButton("KICK", callback_data="cmd:kick", style="danger")],
-            [InlineKeyboardButton("MUTE", callback_data="cmd:mute", style="danger")],
+            [InlineKeyboardButton("BAN", callback_data="cmd:ban", api_kwargs={"style": "danger"})],
+            [InlineKeyboardButton("KICK", callback_data="cmd:kick", api_kwargs={"style": "danger"})],
+            [InlineKeyboardButton("MUTE", callback_data="cmd:mute", api_kwargs={"style": "danger"})],
             
             # Warning Zone - Caution Actions (Default Style)
             [InlineKeyboardButton("WARN", callback_data="cmd:warn")],
             
             # Success Zone - Restorative Actions
-            [InlineKeyboardButton("UNMUTE", callback_data="cmd:unmute", style="success")],
-            [InlineKeyboardButton("UNBAN", callback_data="cmd:unban", style="success")],
-            [InlineKeyboardButton("CLEAR WARN", callback_data="cmd:clearwarn", style="success")],
+            [InlineKeyboardButton("UNMUTE", callback_data="cmd:unmute", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("UNBAN", callback_data="cmd:unban", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("CLEAR WARN", callback_data="cmd:clearwarn", api_kwargs={"style": "success"})],
             
             # Primary Zone - Navigation
-            [InlineKeyboardButton("PANEL", callback_data="cmd:panel", style="primary")],
-            [InlineKeyboardButton("STATS", callback_data="cmd:stats", style="primary")],
+            [InlineKeyboardButton("PANEL", callback_data="cmd:panel", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("STATS", callback_data="cmd:stats", api_kwargs={"style": "primary"})],
         ]
     )
 
