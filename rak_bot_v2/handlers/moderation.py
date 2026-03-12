@@ -198,9 +198,9 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     (
                         f"🚫 <b>Suspicious join restricted</b>\n"
                         f"type={label}\n"
-                        f"user_id={member.id}\n"
+                        f"user_id=<code>{member.id}</code>\n"
                         f"name={member.full_name}\n"
-                        f"chat_id={msg.chat_id}"
+                        f"chat_id=<code>{msg.chat_id}</code>"
                     ),
                     parse_mode="HTML",
                 )
