@@ -21,7 +21,7 @@ from rak_bot_v2.config.constants import (
 from rak_bot_v2.config.settings import get_settings
 from rak_bot_v2.utils.formatters import (
     add_to_group_keyboard,
-    force_join_keyboard,
+    verify_keyboard,
     help_text,
     panel_keyboard,
     styled_card,
@@ -58,8 +58,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     is_joined = await enforce_force_join(update, context, settings.force_channel_id)
     if not is_joined:
         await update.effective_message.reply_text(
-            styled_card("ACCESS DENIED", "Please join our official channel to use the bot."),
-            reply_markup=force_join_keyboard(str(settings.force_channel_link)),
+            styled_card(
+                "ACCESS DENIED",
+                "Join the official channel first, then tap VERIFY to continue.",
+            ),
+            reply_markup=verify_keyboard(),
             parse_mode="HTML",
         )
         return
@@ -87,7 +90,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # 3. Handle Group/Supergroup
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            f"Hello {user.first_name}! AI Governor is active and protecting this group. 🛡️"
+            f"Hello {user.first_name}! Bot active.",
+            parse_mode="HTML",
         )
         return
 
@@ -148,7 +152,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if not context.args or not context.args[0].isdigit():
         await update.effective_message.reply_text(
-            styled_card("INVALID", "Usage: /setdelay [seconds]\nRange: 1 to 86400"),
+            styled_card("INVALID", "Usage: <code>/setdelay [seconds]</code>\nRange: 1 to 86400"),
             parse_mode="HTML",
         )
         return
@@ -211,7 +215,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if update.effective_user.id != settings.owner_id:
         return
     if not context.args:
-        await update.effective_message.reply_text("Usage: /broadcast [message]")
+        await update.effective_message.reply_text("Usage: <code>/broadcast [message]</code>", parse_mode="HTML")
         return
 
     store = context.application.bot_data.get("store")
@@ -278,10 +282,6 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     warnings = await store.increment_warning(update.effective_chat.id, target.id) if store else 1
     action = ""
     if warnings >= MAX_WARNINGS:
-        warnings = 0
-        if store:
-            await store.reset_warning(update.effective_chat.id, target.id)
-        action = "\n\n<b>Warning limit reached. User has been muted.</b>"
         until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
         try:
             await context.bot.restrict_chat_member(
@@ -290,9 +290,20 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 permissions=ChatPermissions(can_send_messages=False),
                 until_date=until,
             )
+            if store:
+                await store.reset_warning(update.effective_chat.id, target.id)
+            warnings = 0
+            action = "\n\n<b>Warning limit reached. User has been muted.</b>"
         except (Forbidden, BadRequest, RetryAfter) as exc:
             LOGGER.warning("warn_auto_mute_failed user=%s err=%s", target.id, exc)
-            action = "\n\nWarning limit reached, but auto-mute failed."
+            action = "\n\n<b>Warning limit reached, but auto-mute failed. Warning counter kept.</b>"
+            await update.effective_message.reply_text(
+                styled_card(
+                    "MUTE FAILED",
+                    f"Could not mute user <code>{target.id}</code>. Check bot permissions.",
+                ),
+                parse_mode="HTML",
+            )
 
     await update.effective_message.reply_text(
         styled_card(

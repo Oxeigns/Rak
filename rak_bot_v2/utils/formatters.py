@@ -22,16 +22,27 @@ def force_join_keyboard(link: str) -> InlineKeyboardMarkup:
     """Create force-join CTA keyboard."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("JOIN CHANNEL", url=str(link))],
+            [InlineKeyboardButton("JOIN CHANNEL", url=str(link), style="primary")],
             [InlineKeyboardButton("VERIFY", callback_data="verify:join", style="success")],
         ]
+    )
+
+
+def verify_keyboard() -> InlineKeyboardMarkup:
+    """Create verify-only CTA keyboard."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("VERIFY", callback_data="verify:join", style="success")]]
     )
 
 
 def add_to_group_keyboard(bot_username: str) -> InlineKeyboardMarkup:
     """Create 'add to group' deep-link button."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("ADD TO GROUP", url=f"https://t.me/{bot_username}?startgroup=true")]]
+        [[InlineKeyboardButton(
+            "ADD TO GROUP",
+            url=f"https://t.me/{bot_username}?startgroup=true",
+            style="primary",
+        )]]
     )
 
 
@@ -110,21 +121,21 @@ def help_text() -> str:
         "AI GOVERNOR HELP",
         (
             "<b>USER COMMANDS</b>\n"
-            "/start – start bot\n"
-            "/help  – show this menu\n\n"
+            "<code>/start</code> – start bot\n"
+            "<code>/help</code> – show this menu\n\n"
             "<b>ADMIN COMMANDS</b>\n"
-            "/panel      – control panel\n"
-            "/setdelay <sec> – auto-delete delay\n"
-            "/warn       – reply to user → warn\n"
-            "/unwarn     – reply → remove warn\n"
-            "/mute       – reply → mute\n"
-            "/unmute     – reply → unmute\n"
-            "/kick       – reply → kick\n"
-            "/ban        – reply → ban\n"
-            "/unban      – reply → unban\n\n"
+            "<code>/panel</code> – control panel\n"
+            "<code>/setdelay &lt;sec&gt;</code> – auto-delete delay\n"
+            "<code>/warn</code> – reply to user → warn\n"
+            "<code>/unwarn</code> – reply → remove warn\n"
+            "<code>/mute</code> – reply → mute\n"
+            "<code>/unmute</code> – reply → unmute\n"
+            "<code>/kick</code> – reply → kick\n"
+            "<code>/ban</code> – reply → ban\n"
+            "<code>/unban</code> – reply → unban\n\n"
             "<b>OWNER COMMANDS</b>\n"
-            "/stats        – bot stats\n"
-            "/broadcast    – message all groups\n"
-            "/reloadwords  – reload word lists"
+            "<code>/stats</code> – bot stats\n"
+            "<code>/broadcast</code> – message all groups\n"
+            "<code>/reloadwords</code> – reload word lists"
         ),
     )
