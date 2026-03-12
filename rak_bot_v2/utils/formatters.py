@@ -68,7 +68,7 @@ def moderation_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
 def admin_commands_keyboard() -> InlineKeyboardMarkup:
     """
     Full admin control panel with sectioned colored buttons.
-    Danger | Default | Success | Primary zones
+    Primary (Blue) | Success (Green) | Danger (Red)
     """
     return InlineKeyboardMarkup(
         [
@@ -77,7 +77,7 @@ def admin_commands_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("KICK", callback_data="cmd:kick", style="danger")],
             [InlineKeyboardButton("MUTE", callback_data="cmd:mute", style="danger")],
             
-            # Warning Zone - Caution Actions
+            # Warning Zone - Caution Actions (Default Style)
             [InlineKeyboardButton("WARN", callback_data="cmd:warn")],
             
             # Success Zone - Restorative Actions
