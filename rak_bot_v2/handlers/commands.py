@@ -43,30 +43,63 @@ LOGGER = logging.getLogger(__name__)
 
 @safe_handler
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start in DM and groups."""
-    settings = get_settings()
-    if not update.effective_message or not update.effective_chat:
+    """
+    Handle /start with specialized logic for DM vs Group.
+    Includes Force-Join security and Dynamic UI.
+    """
+    if not update.effective_message or not update.effective_chat or not update.effective_user:
         return
 
+    settings = get_settings()
+    user = update.effective_user
+    chat = update.effective_chat
+
+    # 1. Security Check: Force Join
     is_joined = await enforce_force_join(update, context, settings.force_channel_id)
     if not is_joined:
         await update.effective_message.reply_text(
-            styled_card("🚫 ɴᴏ ᴀᴄᴄᴇss", "ᴘᴇʜʟᴇ ᴄʜᴀɴɴᴇʟ ᴊᴏɪɴ ᴋᴀʀᴏ, ᴘʜɪʀ ᴠᴇʀɪғʏ ᴅᴀʙᴀᴏ."),
+            styled_card("ACCESS DENIED", "Please join our official channel to use the bot."),
             reply_markup=force_join_keyboard(str(settings.force_channel_link)),
             parse_mode="HTML",
         )
         return
 
-    if update.effective_chat.type == "private":
+    # 2. Handle Private DM
+    if chat.type == "private":
         me = await context.bot.get_me()
+        welcome_text = (
+            f"Hello <b>{user.first_name}</b>!\n\n"
+            "I am AI Governor, the most advanced group moderation bot.\n\n"
+            "<b>Features:</b>\n"
+            "• AI-Powered Spam Protection\n"
+            "• Image & Sticker Moderation\n"
+            "• Zero-Bypass Security\n"
+            "• Performance Statistics\n\n"
+            "Click below to add me to your group!"
+        )
         await update.effective_message.reply_text(
-            styled_card("ᴡᴇʟᴄᴏᴍᴇ", "ᴍᴇɪɴ ᴀɪ ɢᴏᴠᴇʀɴᴏʀ ʙᴏᴛ ʜᴜɴ. ɢʀᴏᴜᴘ ᴍᴇɪɴ ᴀᴅᴅ ᴋᴀʀᴏ ✓"),
+            styled_card("WELCOME", welcome_text),
             parse_mode="HTML",
             reply_markup=add_to_group_keyboard(me.username),
         )
         return
 
-    await panel_command(update, context)
+    # 3. Handle Group/Supergroup
+    if not await is_admin(update, context):
+        await update.effective_message.reply_text(
+            f"Hello {user.first_name}! AI Governor is active and protecting this group. 🛡️"
+        )
+        return
+
+    # Show colored admin panel immediately if sender is admin
+    await update.effective_message.reply_text(
+        styled_card(
+            "ADMIN CONTROL PANEL",
+            "Select an option below to configure moderation for this group."
+        ),
+        reply_markup=panel_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 @safe_handler
@@ -82,18 +115,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @safe_handler
 async def panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show admin control panel."""
-    if not update.effective_message:
+    if not update.effective_message or not update.effective_chat:
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫 ɴᴏ ᴀᴄᴄᴇss", "ʏᴇʜ ᴘᴀɴᴇʟ ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴋᴇ ʟɪʏᴇ ʜᴀɪ."),
+            styled_card("FORBIDDEN", "This panel is restricted to chat administrators."),
             parse_mode="HTML",
         )
         return
     await update.effective_message.reply_text(
         styled_card(
-            "ᴀᴅᴍɪɴ ᴘᴀɴᴇʟ",
-            "• /setdelay &lt;sec&gt;\n• /ban /kick /mute\n• ᴠᴇʀɪғʏ ᴊᴏɪɴ\n• ᴍᴏᴅᴇʀᴀᴛɪᴏɴ ᴏɴ",
+            "ADMIN PANEL",
+            "Use the buttons below to manage system settings and view group data."
         ),
         reply_markup=panel_keyboard(),
         parse_mode="HTML",
@@ -109,13 +142,13 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫 ɴᴏ ᴀᴄᴄᴇss", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴅᴇʟᴀʏ ʙᴀᴅᴀʟ ꜱᴀᴋᴛᴀ ʜᴀɪ."),
+            styled_card("FORBIDDEN", "Only admins can change the deletion delay."),
             parse_mode="HTML",
         )
         return
     if not context.args or not context.args[0].isdigit():
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇ: /setdelay 1-86400"),
+            styled_card("INVALID", "Usage: /setdelay [seconds]\nRange: 1 to 86400"),
             parse_mode="HTML",
         )
         return
@@ -123,7 +156,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     seconds = int(context.args[0])
     if seconds < MIN_DELETE_DELAY_SECONDS or seconds > MAX_DELETE_DELAY_SECONDS:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ʀᴀɴɢᴇ 1 sᴇ 86400 sᴇᴄ ᴛᴀᴋ ʀᴀᴋʜᴏ."),
+            styled_card("INVALID", "Delay must be between 1 and 86400 seconds."),
             parse_mode="HTML",
         )
         return
@@ -132,7 +165,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if store:
         await store.set_delete_delay(update.effective_chat.id, seconds)
     await update.effective_message.reply_text(
-        styled_card("✓ sᴀᴠᴇᴅ", f"ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ ᴀʙ {seconds}s ʜᴏ ɢᴀʏᴀ."),
+        styled_card("SUCCESS", f"Auto-delete delay updated to {seconds} seconds."),
         parse_mode="HTML",
     )
 
@@ -147,7 +180,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if update.effective_user.id != settings.owner_id:
         await update.effective_message.reply_text(
-            styled_card("🚫 ꜰᴏʀʙɪᴅᴅᴇɴ", "ʏᴇʜ ᴄᴏᴍᴍᴀɴᴅ ꜱɪʀꜰ ᴏᴡɴᴇʀ ᴋᴇ ʟɪʏᴇ ʜᴀɪ."),
+            styled_card("FORBIDDEN", "This command is restricted to the bot owner."),
             parse_mode="HTML",
         )
         return
@@ -158,12 +191,12 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     cached_texts = cache.cached_text_count if cache else 0
     cached_imgs = cache.cached_image_count if cache else 0
     text = styled_card(
-        "📊 ꜱᴛᴀᴛꜱ",
+        "STATISTICS",
         (
-            f"ᴛᴏᴛᴀʟ ᴄʜᴀᴛs: {total_chats}\n"
-            f"ᴄᴀᴄʜᴇᴅ ᴛᴇxᴛs: {cached_texts}\n"
-            f"ᴄᴀᴄʜᴇᴅ ɪᴍᴀɢᴇs: {cached_imgs}\n"
-            f"ᴡᴀʀɴɪɴɢs: {total_warn}"
+            f"Total Chats: {total_chats}\n"
+            f"Cached Texts: {cached_texts}\n"
+            f"Cached Images: {cached_imgs}\n"
+            f"Global Warnings: {total_warn}"
         ),
     )
     await update.effective_message.reply_text(text, parse_mode="HTML")
@@ -178,23 +211,24 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if update.effective_user.id != settings.owner_id:
         return
     if not context.args:
-        await update.effective_message.reply_text("ᴜsᴀɢᴇ: /broadcast <ᴍᴇssᴀɢᴇ>")
+        await update.effective_message.reply_text("Usage: /broadcast [message]")
         return
 
     store = context.application.bot_data.get("store")
     chats = await store.get_all_chats() if store else []
     sent = 0
     failed = 0
+    broadcast_text = " ".join(context.args)
     for chat_id, _chat_type in chats:
         try:
-            await context.bot.send_message(chat_id, " ".join(context.args), parse_mode="HTML")
+            await context.bot.send_message(chat_id, broadcast_text, parse_mode="HTML")
             sent += 1
             await asyncio.sleep(BROADCAST_DELAY_SECONDS)
         except Exception:  # noqa: BLE001
             failed += 1
 
     await update.effective_message.reply_text(
-        styled_card("✓ ʙʀᴏᴀᴅᴄᴀsᴛ ᴄᴏᴍᴘʟᴇᴛᴇ", f"sᴇɴᴛ: {sent}\nғᴀɪʟᴇᴅ: {failed}"),
+        styled_card("BROADCAST COMPLETE", f"Sent: {sent}\nFailed: {failed}"),
         parse_mode="HTML",
     )
 
@@ -206,17 +240,12 @@ async def reload_words_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.effective_message or not update.effective_user:
         return
     if update.effective_user.id != settings.owner_id:
-        await update.effective_message.reply_text(
-            styled_card("🚫 ꜰᴏʀʙɪᴅᴅᴇɴ", "ʏᴇʜ ᴄᴏᴍᴍᴀɴᴅ ꜱɪʀꜰ ᴏᴡɴᴇʀ ᴋᴇ ʟɪʏᴇ ʜᴀɪ."),
-            parse_mode="HTML",
-        )
         return
     cache = context.application.bot_data.get("cache")
     if not cache:
-        await update.effective_message.reply_text(styled_card("⚠️", "Cache unavailable."), parse_mode="HTML")
         return
     await cache.reload_word_lists()
-    await update.effective_message.reply_text(styled_card("✓", "Word lists reloaded."), parse_mode="HTML")
+    await update.effective_message.reply_text(styled_card("SUCCESS", "Word lists reloaded."), parse_mode="HTML")
 
 
 # ── Warn / Unwarn ──────────────────────────────────────────────────────────
@@ -228,20 +257,20 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴡᴀʀɴ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "Only admins can issue warnings."), parse_mode="HTML"
         )
         return
 
     target = get_reply_target(update)
     if not target:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+            styled_card("INVALID", "Reply to a message to warn that user."), parse_mode="HTML"
         )
         return
 
     if await is_target_admin(update.effective_chat.id, target.id, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ᴀᴅᴍɪɴ ᴋᴏ ᴡᴀʀɴ ɴᴀʜɪ ᴋᴀʀ ꜱᴀᴋᴛᴇ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "You cannot warn another administrator."), parse_mode="HTML"
         )
         return
 
@@ -252,7 +281,7 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         warnings = 0
         if store:
             await store.reset_warning(update.effective_chat.id, target.id)
-        action = "\n\n⚠️ ʟɪᴍɪᴛ ᴄʀᴏss! ᴜsᴇʀ ᴍᴜᴛᴇ ᴋɪʏᴀ ɢᴀʏᴀ."
+        action = "\n\n<b>Warning limit reached. User has been muted.</b>"
         until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
         try:
             await context.bot.restrict_chat_member(
@@ -263,12 +292,12 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
         except (Forbidden, BadRequest, RetryAfter) as exc:
             LOGGER.warning("warn_auto_mute_failed user=%s err=%s", target.id, exc)
-            action = "\n\n⚠️ ᴀᴜᴛᴏ-ᴍᴜᴛᴇ ꜰᴀɪʟᴇᴅ."
+            action = "\n\nWarning limit reached, but auto-mute failed."
 
     await update.effective_message.reply_text(
         styled_card(
-            "⚠️ ᴡᴀʀɴ",
-            f"{target.mention_html()} ᴋᴏ ᴡᴀʀɴ ᴍɪʟᴀ.\nᴄᴏᴜɴᴛ: {warnings}/{MAX_WARNINGS}{action}",
+            "WARNING ISSUED",
+            f"{target.mention_html()} has been warned.\nStatus: {warnings}/{MAX_WARNINGS}{action}",
         ),
         parse_mode="HTML",
         reply_markup=warn_keyboard(target.id),
@@ -282,14 +311,14 @@ async def unwarn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴜɴᴡᴀʀɴ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "Only admins can remove warnings."), parse_mode="HTML"
         )
         return
 
     target = get_reply_target(update)
     if not target:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+            styled_card("INVALID", "Reply to a message to remove warnings."), parse_mode="HTML"
         )
         return
 
@@ -298,7 +327,7 @@ async def unwarn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await store.reset_warning(update.effective_chat.id, target.id)
 
     await update.effective_message.reply_text(
-        styled_card("✓ ᴜɴᴡᴀʀɴ", f"{target.mention_html()} ᴋɪ ᴡᴀʀɴɪɴɢs ʜᴀᴛᴀ ᴅɪ."),
+        styled_card("SUCCESS", f"All warnings removed for {target.mention_html()}."),
         parse_mode="HTML",
     )
 
@@ -312,20 +341,20 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴍᴜᴛᴇ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "Only admins can mute users."), parse_mode="HTML"
         )
         return
 
     target = get_reply_target(update)
     if not target:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+            styled_card("INVALID", "Reply to a message to mute that user."), parse_mode="HTML"
         )
         return
 
     if await is_target_admin(update.effective_chat.id, target.id, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ᴀᴅᴍɪɴ ᴋᴏ ᴍᴜᴛᴇ ɴᴀʜɪ ᴋᴀʀ ꜱᴀᴋᴛᴇ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "You cannot mute another administrator."), parse_mode="HTML"
         )
         return
 
@@ -339,8 +368,8 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         await update.effective_message.reply_text(
             styled_card(
-                "🔇 ᴍᴜᴛᴇᴅ",
-                f"{target.mention_html()} ᴋᴏ {MUTE_SECONDS // 60} ᴍɪɴ ᴋᴇ ʟɪʏᴇ ᴍᴜᴛᴇ ᴋɪʏᴀ.",
+                "USER MUTED",
+                f"{target.mention_html()} has been muted for {MUTE_SECONDS // 60} minutes.",
             ),
             parse_mode="HTML",
             reply_markup=unmute_keyboard(target.id),
@@ -348,7 +377,7 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("mute_cmd_failed user=%s err=%s", target.id, exc)
         await update.effective_message.reply_text(
-            styled_card("⚠️", "Mute failed. Bot ko admin banaon."), parse_mode="HTML"
+            styled_card("ERROR", "Failed to mute user. Ensure bot has permissions."), parse_mode="HTML"
         )
 
 
@@ -359,14 +388,14 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴜɴᴍᴜᴛᴇ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "Only admins can unmute users."), parse_mode="HTML"
         )
         return
 
     target = get_reply_target(update)
     if not target:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+            styled_card("INVALID", "Reply to a message to unmute that user."), parse_mode="HTML"
         )
         return
 
@@ -388,13 +417,13 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ),
         )
         await update.effective_message.reply_text(
-            styled_card("🔊 ᴜɴᴍᴜᴛᴇᴅ", f"{target.mention_html()} ᴀʙ ʙᴏʟ ꜱᴀᴋᴛᴀ ʜᴀɪ."),
+            styled_card("USER UNMUTED", f"{target.mention_html()} can now speak."),
             parse_mode="HTML",
         )
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("unmute_cmd_failed user=%s err=%s", target.id, exc)
         await update.effective_message.reply_text(
-            styled_card("⚠️", "Unmute failed."), parse_mode="HTML"
+            styled_card("ERROR", "Failed to unmute user."), parse_mode="HTML"
         )
 
 
@@ -402,25 +431,25 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 @safe_handler
 async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Kick (ban then immediately unban) a user (reply to their message)."""
+    """Kick a user (reply to their message)."""
     if not update.effective_chat or not update.effective_message:
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴋɪᴄᴋ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "Only admins can kick users."), parse_mode="HTML"
         )
         return
 
     target = get_reply_target(update)
     if not target:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+            styled_card("INVALID", "Reply to a message to kick that user."), parse_mode="HTML"
         )
         return
 
     if await is_target_admin(update.effective_chat.id, target.id, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ᴀᴅᴍɪɴ ᴋᴏ ᴋɪᴄᴋ ɴᴀʜɪ ᴋᴀʀ ꜱᴀᴋᴛᴇ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "You cannot kick another administrator."), parse_mode="HTML"
         )
         return
 
@@ -429,13 +458,13 @@ async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await asyncio.sleep(1)
         await context.bot.unban_chat_member(update.effective_chat.id, target.id)
         await update.effective_message.reply_text(
-            styled_card("👢 ᴋɪᴄᴋᴇᴅ", f"{target.mention_html()} ᴋᴏ ᴋɪᴄᴋ ᴋɪʏᴀ ɢᴀʏᴀ."),
+            styled_card("USER KICKED", f"{target.mention_html()} has been removed."),
             parse_mode="HTML",
         )
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("kick_cmd_failed user=%s err=%s", target.id, exc)
         await update.effective_message.reply_text(
-            styled_card("⚠️", "Kick failed. Bot ko admin banaon."), parse_mode="HTML"
+            styled_card("ERROR", "Failed to kick user."), parse_mode="HTML"
         )
 
 
@@ -448,20 +477,20 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ʙᴀɴ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "Only admins can ban users."), parse_mode="HTML"
         )
         return
 
     target = get_reply_target(update)
     if not target:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+            styled_card("INVALID", "Reply to a message to ban that user."), parse_mode="HTML"
         )
         return
 
     if await is_target_admin(update.effective_chat.id, target.id, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ᴀᴅᴍɪɴ ᴋᴏ ʙᴀɴ ɴᴀʜɪ ᴋᴀʀ ꜱᴀᴋᴛᴇ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "You cannot ban another administrator."), parse_mode="HTML"
         )
         return
 
@@ -477,44 +506,44 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         await update.effective_message.reply_text(
             styled_card(
-                "🔨 ʙᴀɴɴᴇᴅ",
-                f"{target.mention_html()} ᴋᴏ ʙᴀɴ ᴋɪʏᴀ ɢᴀʏᴀ.\nʀᴇᴀsᴏɴ: {reason}",
+                "USER BANNED",
+                f"{target.mention_html()} banned permanently.\nReason: {reason}",
             ),
             parse_mode="HTML",
         )
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("ban_cmd_failed user=%s err=%s", target.id, exc)
         await update.effective_message.reply_text(
-            styled_card("⚠️", "Ban failed. Bot ko admin banaon."), parse_mode="HTML"
+            styled_card("ERROR", "Failed to ban user."), parse_mode="HTML"
         )
 
 
 @safe_handler
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Unban a previously banned user (reply to a forwarded message)."""
+    """Unban a previously banned user."""
     if not update.effective_chat or not update.effective_message:
         return
     if not await is_admin(update, context):
         await update.effective_message.reply_text(
-            styled_card("🚫", "ꜱɪʀꜰ ᴀᴅᴍɪɴ ᴜɴʙᴀɴ ᴋᴀʀ ꜱᴀᴋᴛᴇ ʜᴀɪɴ."), parse_mode="HTML"
+            styled_card("FORBIDDEN", "Only admins can unban users."), parse_mode="HTML"
         )
         return
 
     target = get_reply_target(update)
     if not target:
         await update.effective_message.reply_text(
-            styled_card("ɪɴᴠᴀʟɪᴅ", "ᴜsᴇʀ ᴋᴇ ᴍᴇssᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ ᴋᴀʀᴏ."), parse_mode="HTML"
+            styled_card("INVALID", "Reply to their message/forward to unban."), parse_mode="HTML"
         )
         return
 
     try:
         await context.bot.unban_chat_member(update.effective_chat.id, target.id)
         await update.effective_message.reply_text(
-            styled_card("✓ ᴜɴʙᴀɴɴᴇᴅ", f"{target.mention_html()} ᴀʙ ᴠᴀᴘᴀs ᴀᴀ ꜱᴀᴋᴛᴀ ʜᴀɪ."),
+            styled_card("USER UNBANNED", f"{target.mention_html()} is now unbanned."),
             parse_mode="HTML",
         )
     except (Forbidden, BadRequest, RetryAfter) as exc:
         LOGGER.warning("unban_cmd_failed user=%s err=%s", target.id, exc)
         await update.effective_message.reply_text(
-            styled_card("⚠️", "Unban failed."), parse_mode="HTML"
+            styled_card("ERROR", "Failed to unban user."), parse_mode="HTML"
         )
