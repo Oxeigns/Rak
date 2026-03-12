@@ -21,7 +21,7 @@ from rak_bot_v2.config.constants import (
 from rak_bot_v2.config.settings import get_settings
 from rak_bot_v2.utils.formatters import (
     add_to_group_keyboard,
-    verify_keyboard,
+    force_join_keyboard,
     help_text,
     panel_keyboard,
     styled_card,
@@ -62,7 +62,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 "ACCESS DENIED",
                 "Join the official channel first, then tap VERIFY to continue.",
             ),
-            reply_markup=verify_keyboard(),
+            reply_markup=force_join_keyboard(str(settings.force_channel_link)),
             parse_mode="HTML",
         )
         return

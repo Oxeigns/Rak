@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from rak_bot_v2.config.constants import CALLBACK_RATE_LIMIT_CLICKS, CALLBACK_RATE_LIMIT_WINDOW_SECONDS
 from rak_bot_v2.config.settings import get_settings
-from rak_bot_v2.utils.formatters import styled_card
+from rak_bot_v2.utils.formatters import force_join_keyboard, styled_card
 from rak_bot_v2.utils.helpers import (
     callback_allowed,
     enforce_force_join,
@@ -64,7 +64,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if ok
             else "Access Denied: You have not joined the channel yet."
         )
-        await safe_edit_message_text(update, styled_card("VERIFICATION", msg))
+        if ok:
+            await safe_edit_message_text(update, styled_card("VERIFICATION", msg))
+        else:
+            await safe_edit_message_text(
+                update,
+                styled_card("VERIFICATION", msg),
+                reply_markup=force_join_keyboard(str(settings.force_channel_link)),
+            )
         return
 
     # ── Config: Delete Delay ───────────────────────────────────────────────
