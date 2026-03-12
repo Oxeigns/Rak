@@ -11,9 +11,9 @@ def panel_keyboard() -> InlineKeyboardMarkup:
     """Create admin control panel keyboard."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("⏱ sᴇᴛ ᴅᴇʟᴀʏ", callback_data="cfg:delay:prompt")],
-            [InlineKeyboardButton("◆ ᴠᴇʀɪғʏ ᴊᴏɪɴ", callback_data="verify:join")],
-            [InlineKeyboardButton("📊 sᴛᴀᴛs", callback_data="cfg:stats")],
+            [InlineKeyboardButton("SET DELAY", callback_data="cfg:delay:prompt", style="primary")],
+            [InlineKeyboardButton("VERIFY JOIN", callback_data="verify:join", style="success")],
+            [InlineKeyboardButton("STATS", callback_data="cfg:stats", style="primary")],
         ]
     )
 
@@ -22,8 +22,8 @@ def force_join_keyboard(link: str) -> InlineKeyboardMarkup:
     """Create force-join CTA keyboard."""
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("◆ ᴊᴏɪɴ ᴄʜᴀɴɴᴇʟ", url=str(link))],
-            [InlineKeyboardButton("✓ ᴠᴇʀɪғʏ", callback_data="verify:join")],
+            [InlineKeyboardButton("JOIN CHANNEL", url=str(link))],
+            [InlineKeyboardButton("VERIFY", callback_data="verify:join", style="success")],
         ]
     )
 
@@ -31,21 +31,64 @@ def force_join_keyboard(link: str) -> InlineKeyboardMarkup:
 def add_to_group_keyboard(bot_username: str) -> InlineKeyboardMarkup:
     """Create 'add to group' deep-link button."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("✓ ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://t.me/{bot_username}?startgroup=true")]]
+        [[InlineKeyboardButton("ADD TO GROUP", url=f"https://t.me/{bot_username}?startgroup=true")]]
     )
 
 
 def unmute_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Create admin-only unmute action button."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔊 ᴜɴᴍᴜᴛᴇ ᴜsᴇʀ", callback_data=f"mod:unmute:{user_id}")]]
+        [[InlineKeyboardButton("UNMUTE USER", callback_data=f"mod:unmute:{user_id}", style="success")]]
     )
 
 
 def warn_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Create admin-only warn-reset button."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🗑 ᴄʟᴇᴀʀ ᴡᴀʀɴɪɴɢs", callback_data=f"mod:clearwarn:{user_id}")]]
+        [[InlineKeyboardButton("CLEAR WARNINGS", callback_data=f"mod:clearwarn:{user_id}", style="success")]]
+    )
+
+
+def moderation_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """
+    Create violation response keyboard.
+    Shown when content is flagged - allows admin to choose action.
+    """
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("DELETE + BAN", callback_data=f"mod:ban:{user_id}", style="danger")],
+            [InlineKeyboardButton("DELETE + MUTE", callback_data=f"mod:mute:{user_id}", style="danger")],
+            [InlineKeyboardButton("DELETE + WARN", callback_data=f"mod:warn:{user_id}")],
+            [InlineKeyboardButton("DELETE ONLY", callback_data=f"mod:delete:{user_id}")],
+            [InlineKeyboardButton("IGNORE", callback_data=f"mod:ignore:{user_id}", style="success")],
+        ]
+    )
+
+
+def admin_commands_keyboard() -> InlineKeyboardMarkup:
+    """
+    Full admin control panel with sectioned colored buttons.
+    Danger | Default | Success | Primary zones
+    """
+    return InlineKeyboardMarkup(
+        [
+            # Danger Zone - Destructive Actions
+            [InlineKeyboardButton("BAN", callback_data="cmd:ban", style="danger")],
+            [InlineKeyboardButton("KICK", callback_data="cmd:kick", style="danger")],
+            [InlineKeyboardButton("MUTE", callback_data="cmd:mute", style="danger")],
+            
+            # Warning Zone - Caution Actions
+            [InlineKeyboardButton("WARN", callback_data="cmd:warn")],
+            
+            # Success Zone - Restorative Actions
+            [InlineKeyboardButton("UNMUTE", callback_data="cmd:unmute", style="success")],
+            [InlineKeyboardButton("UNBAN", callback_data="cmd:unban", style="success")],
+            [InlineKeyboardButton("CLEAR WARN", callback_data="cmd:clearwarn", style="success")],
+            
+            # Primary Zone - Navigation
+            [InlineKeyboardButton("PANEL", callback_data="cmd:panel", style="primary")],
+            [InlineKeyboardButton("STATS", callback_data="cmd:stats", style="primary")],
+        ]
     )
 
 
@@ -64,24 +107,24 @@ def styled_card(title: str, body: str) -> str:
 def help_text() -> str:
     """Full help text for /help command."""
     return styled_card(
-        "ᴀɪ ɢᴏᴠᴇʀɴᴏʀ ʜᴇʟᴘ",
+        "AI GOVERNOR HELP",
         (
-            "<b>👤 ᴜsᴇʀ ᴄᴏᴍᴍᴀɴᴅs</b>\n"
-            "/start – ʙᴏᴛ sᴛᴀʀᴛ ᴋᴀʀᴏ\n"
-            "/help  – ʏᴇʜ ᴍᴇɴᴜ ᴅᴇᴋʜᴏ\n\n"
-            "<b>🛡 ᴀᴅᴍɪɴ ᴄᴏᴍᴍᴀɴᴅs</b>\n"
-            "/panel      – ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ\n"
-            "/setdelay &lt;sec&gt; – ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ ᴅᴇʟᴀʏ\n"
-            "/warn       – ʀᴇᴘʟʏ ᴍᴇɪɴ ᴜsᴇ ᴋᴀʀᴏ → ᴡᴀʀɴ\n"
-            "/unwarn     – ʀᴇᴘʟʏ ᴍᴇɪɴ → ᴡᴀʀɴ ʜᴀᴛᴀᴏ\n"
-            "/mute       – ʀᴇᴘʟʏ ᴍᴇɪɴ → ᴍᴜᴛᴇ\n"
-            "/unmute     – ʀᴇᴘʟʏ ᴍᴇɪɴ → ᴜɴᴍᴜᴛᴇ\n"
-            "/kick       – ʀᴇᴘʟʏ ᴍᴇɪɴ → ᴋɪᴄᴋ\n"
-            "/ban        – ʀᴇᴘʟʏ ᴍᴇɪɴ → ʙᴀɴ\n"
-            "/unban      – ʀᴇᴘʟʏ ᴍᴇɪɴ → ᴜɴʙᴀɴ\n\n"
-            "<b>👑 ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅs</b>\n"
-            "/stats        – ʙᴏᴛ sᴛᴀᴛs\n"
-            "/broadcast    – sᴀʙ ɢʀᴏᴜᴘs ᴍᴇɪɴ ᴍᴇssᴀɢᴇ\n"
-            "/reloadwords  – ᴡᴏʀᴅ ʟɪsᴛ ʀᴇʟᴏᴀᴅ"
+            "<b>USER COMMANDS</b>\n"
+            "/start – start bot\n"
+            "/help  – show this menu\n\n"
+            "<b>ADMIN COMMANDS</b>\n"
+            "/panel      – control panel\n"
+            "/setdelay <sec> – auto-delete delay\n"
+            "/warn       – reply to user → warn\n"
+            "/unwarn     – reply → remove warn\n"
+            "/mute       – reply → mute\n"
+            "/unmute     – reply → unmute\n"
+            "/kick       – reply → kick\n"
+            "/ban        – reply → ban\n"
+            "/unban      – reply → unban\n\n"
+            "<b>OWNER COMMANDS</b>\n"
+            "/stats        – bot stats\n"
+            "/broadcast    – message all groups\n"
+            "/reloadwords  – reload word lists"
         ),
     )
