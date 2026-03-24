@@ -22,7 +22,7 @@ async def _periodic_cache_cleanup(app: Application) -> None:
         try:
             await asyncio.sleep(3600)
             cache: CacheManager | None = app.bot_data.get("cache")
-            if cache:
+            if cache is not None:
                 await cache.cleanup_old_cache()
         except asyncio.CancelledError:
             break

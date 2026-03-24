@@ -98,8 +98,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         total_chats = len(await store.get_all_chats()) if store else 0
         total_warn = await store.get_total_warnings() if store else 0
-        cached_texts = cache.cached_text_count if cache else 0
-        cached_imgs = cache.cached_image_count if cache else 0
+        cached_texts = cache.cached_text_count if cache is not None else 0
+        cached_imgs = cache.cached_image_count if cache is not None else 0
         
         text = styled_card(
             "SYSTEM STATISTICS",
