@@ -392,14 +392,14 @@ async def _moderate_content(
 
     # ── Stage 1 & 2: Local cache + word lists ─────────────────────────────
     if text_payload:
-        if cache and await cache.is_text_cached_illegal(text_payload):
+        if cache is not None and await cache.is_text_cached_illegal(text_payload):
             return ModerationResult(action="delete", reason="Cached illegal content")
 
-        if cache and await cache.contains_blacklist_word(text_payload):
+        if cache is not None and await cache.contains_blacklist_word(text_payload):
             await cache.save_illegal_text(text_payload)
             return ModerationResult(action="delete", reason="Blacklisted word detected")
 
-        if cache and await cache.contains_whitelist_word(text_payload):
+        if cache is not None and await cache.contains_whitelist_word(text_payload):
             return ModerationResult(action="allow", reason="Whitelisted content")
 
     # ── Stage 3 & 4: AI pipeline ──────────────────────────────────────────
@@ -469,7 +469,7 @@ async def _moderate_text_only(ai, cache, text_payload: str) -> ModerationResult:
     if not text_payload:
         return ModerationResult(action="allow", reason="No text payload")
     result = await ai.moderate_text(text_payload)
-    if cache and result.action == "delete":
+    if cache is not None and result.action == "delete":
         await cache.save_illegal_text(text_payload)
     return result
 
@@ -489,11 +489,11 @@ async def _moderate_photo(
         file = await context.bot.get_file(msg.photo[-1].file_id)
         blob = bytes(await file.download_as_bytearray())
 
-        if cache and await cache.is_image_cached_illegal(blob):
+        if cache is not None and await cache.is_image_cached_illegal(blob):
             return ModerationResult(action="delete", reason="Cached illegal image")
 
         result = await ai.moderate_media(blob, "image/jpeg", msg.caption or "")
-        if cache and result.action == "delete":
+        if cache is not None and result.action == "delete":
             await cache.save_illegal_image(blob)
         return result
 

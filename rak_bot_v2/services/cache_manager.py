@@ -210,7 +210,7 @@ class CacheManager:
             self._mongo_collection = None
 
     async def _is_text_hash_in_mongo(self, text_hash: str) -> bool:
-        if not self._mongo_collection:
+        if self._mongo_collection is None:
             return False
         try:
             doc = await self._mongo_collection.find_one(
@@ -228,7 +228,7 @@ class CacheManager:
         text: str,
         normalized_text: str,
     ) -> None:
-        if not self._mongo_collection:
+        if self._mongo_collection is None:
             return
         try:
             await self._mongo_collection.update_one(
