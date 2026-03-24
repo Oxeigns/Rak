@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import imagehash
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 from PIL import Image
 
 LOGGER = logging.getLogger(__name__)
@@ -20,7 +21,13 @@ LOGGER = logging.getLogger(__name__)
 class CacheManager:
     """Manage moderation cache with on-disk persistence."""
 
-    def __init__(self, cache_dir: str = "cache") -> None:
+    def __init__(
+        self,
+        cache_dir: str = "cache",
+        mongo_uri: str = "",
+        mongo_db_name: str = "ai_governor",
+        mongo_collection: str = "illegal_text_cache",
+    ) -> None:
         self.cache_dir = Path(cache_dir)
         self.illegal_text_dir = self.cache_dir / "illegal_text"
         self.illegal_images_dir = self.cache_dir / "illegal_images"
@@ -29,7 +36,6 @@ class CacheManager:
 
         self._memory_cache: set[str] = set()
         self._access_times: dict[str, float] = {}
-        self._max_memory_items = 10_000
         self._image_hashes: set[str] = set()
 
         # Word lists stored as frozen snapshots for lock-free reads
@@ -37,6 +43,11 @@ class CacheManager:
         self._whitelist: frozenset[str] = frozenset()
 
         self._lock = asyncio.Lock()
+        self._mongo_uri = mongo_uri
+        self._mongo_db_name = mongo_db_name
+        self._mongo_collection_name = mongo_collection
+        self._mongo_client: AsyncIOMotorClient | None = None
+        self._mongo_collection: AsyncIOMotorCollection | None = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -46,6 +57,7 @@ class CacheManager:
         self.illegal_images_dir.mkdir(parents=True, exist_ok=True)
         self.blacklist_file.touch(exist_ok=True)
         self.whitelist_file.touch(exist_ok=True)
+        await self._initialize_mongo()
         await self._load_memory_cache()
         await self._load_word_lists()
 
@@ -78,27 +90,30 @@ class CacheManager:
             if text_hash in self._memory_cache:
                 self._access_times[text_hash] = time.time()
                 return True
+        if await self._is_text_hash_in_mongo(text_hash):
+            async with self._lock:
+                self._memory_cache.add(text_hash)
+                self._access_times[text_hash] = time.time()
+            return True
         return False
 
     async def save_illegal_text(self, text: str) -> None:
-        """Persist illegal text hash; evict oldest entry when at capacity."""
+        """Persist illegal text hash to local cache and MongoDB."""
         text_hash = self._get_text_hash(text)
+        normalized_text = self._normalize_text(text)
         file_path = self.illegal_text_dir / f"{text_hash}.txt"
         async with self._lock:
             if text_hash in self._memory_cache:
                 self._access_times[text_hash] = time.time()
-                return
-            # LRU eviction
-            if len(self._memory_cache) >= self._max_memory_items and self._access_times:
-                oldest = min(self._access_times, key=self._access_times.__getitem__)
-                self._memory_cache.discard(oldest)
-                self._access_times.pop(oldest, None)
-                # Also remove from disk
-                old_file = self.illegal_text_dir / f"{oldest}.txt"
-                await asyncio.to_thread(self._safe_unlink, old_file)
-            self._memory_cache.add(text_hash)
-            self._access_times[text_hash] = time.time()
+            else:
+                self._memory_cache.add(text_hash)
+                self._access_times[text_hash] = time.time()
         await asyncio.to_thread(self._write_file, file_path, text)
+        await self._save_text_hash_to_mongo(
+            text_hash=text_hash,
+            text=text,
+            normalized_text=normalized_text,
+        )
 
     # ── Image Cache ────────────────────────────────────────────────────────
 
@@ -171,6 +186,66 @@ class CacheManager:
             await asyncio.to_thread(self._safe_unlink, disk_file)
 
         LOGGER.info("cache_cleanup_removed: %s entries", len(to_remove))
+
+    # ── Mongo Persistence ──────────────────────────────────────────────────
+
+    async def _initialize_mongo(self) -> None:
+        if not self._mongo_uri:
+            return
+        try:
+            self._mongo_client = AsyncIOMotorClient(self._mongo_uri, serverSelectionTimeoutMS=5000)
+            await self._mongo_client.admin.command("ping")
+            db = self._mongo_client[self._mongo_db_name]
+            self._mongo_collection = db[self._mongo_collection_name]
+            await self._mongo_collection.create_index("text_hash", unique=True)
+            await self._mongo_collection.create_index("created_at")
+            LOGGER.info(
+                "mongo_cache_connected db=%s collection=%s",
+                self._mongo_db_name,
+                self._mongo_collection_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("mongo_cache_init_failed err=%s", exc)
+            self._mongo_client = None
+            self._mongo_collection = None
+
+    async def _is_text_hash_in_mongo(self, text_hash: str) -> bool:
+        if not self._mongo_collection:
+            return False
+        try:
+            doc = await self._mongo_collection.find_one(
+                {"text_hash": text_hash},
+                projection={"_id": 1},
+            )
+            return doc is not None
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("mongo_cache_lookup_failed hash=%s err=%s", text_hash, exc)
+            return False
+
+    async def _save_text_hash_to_mongo(
+        self,
+        text_hash: str,
+        text: str,
+        normalized_text: str,
+    ) -> None:
+        if not self._mongo_collection:
+            return
+        try:
+            await self._mongo_collection.update_one(
+                {"text_hash": text_hash},
+                {
+                    "$setOnInsert": {
+                        "text_hash": text_hash,
+                        "text": text,
+                        "normalized_text": normalized_text,
+                        "created_at": int(time.time()),
+                    },
+                    "$set": {"last_seen_at": int(time.time())},
+                },
+                upsert=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("mongo_cache_save_failed hash=%s err=%s", text_hash, exc)
 
     # ── Internal Loaders ───────────────────────────────────────────────────
 

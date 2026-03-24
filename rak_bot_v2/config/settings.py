@@ -33,6 +33,18 @@ class Settings(BaseSettings):
         alias="CACHE_DIR",
         default="/tmp/cache",
     )
+    mongodb_uri: str = Field(
+        alias="MONGODB_URI",
+        default="mongodb+srv://MISSAVA:XuPWJQW0vfsUGf8z@certified.564gwfy.mongodb.net/?appName=Certified",
+    )
+    mongo_db_name: str = Field(
+        alias="MONGO_DB_NAME",
+        default="ai_governor",
+    )
+    mongo_cache_collection: str = Field(
+        alias="MONGO_CACHE_COLLECTION",
+        default="illegal_text_cache",
+    )
 
 
 @lru_cache()
