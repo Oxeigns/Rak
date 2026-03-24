@@ -39,7 +39,12 @@ async def on_startup(app: Application) -> None:
     await store.initialize()
 
     # Cache – now reads cache_dir from settings (was from os.getenv directly)
-    cache = CacheManager(settings.cache_dir)
+    cache = CacheManager(
+        cache_dir=settings.cache_dir,
+        mongo_uri=settings.mongodb_uri,
+        mongo_db_name=settings.mongo_db_name,
+        mongo_collection=settings.mongo_cache_collection,
+    )
     await cache.initialize()
 
     # AI moderation
