@@ -1,1 +1,1 @@
-worker: python rak_bot_v2/main.py
+worker: python -m rak_bot_v2.main
