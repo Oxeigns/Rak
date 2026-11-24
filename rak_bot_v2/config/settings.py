@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     )
     mongodb_uri: str = Field(
         alias="MONGODB_URI",
-        default="mongodb+srv://MISSAVA:XuPWJQW0vfsUGf8z@certified.564gwfy.mongodb.net/?appName=Certified",
+        default="",
     )
     mongo_db_name: str = Field(
         alias="MONGO_DB_NAME",
